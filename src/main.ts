@@ -9,7 +9,10 @@ async function bootstrap() {
   
   // Cho phép Frontend truy cập API
   app.enableCors({
-    origin: 'http://localhost:3000', // Port mặc định của NextJS
+    origin: [
+      "http://localhost:3000", 
+      process.env.FRONTEND_URL_PROD
+    ].filter(Boolean),
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
