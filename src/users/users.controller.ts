@@ -2,40 +2,47 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } f
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { Roles } from '../common/decorators/roles.decorator'; 
+import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/role.guard'; 
+import { RolesGuard } from '../common/guards/role.guard';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin')
-@Controller('users') // Đã bao gồm '/users' cho tất cả
+@Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Post() // API sẽ là: POST /users
+  @Post() // POST /users
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
   }
 
-  @Get() // API sẽ là: GET /users?search=...&role=...
+  @Get() // GET /users?search=...&role=...&page=1&limit=10
   findAll(
     @Query('search') search?: string,
     @Query('role') role?: 'admin' | 'lecturer' | 'student',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.usersService.findAll({ search, role });
+    return this.usersService.findAll({
+      search,
+      role,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 10,
+    });
   }
 
-  @Get(':id') // API sẽ là: GET /users/UUID
+  @Get(':id') // GET /users/:id
   findOne(@Param('id') id: string) {
     return this.usersService.findOne(id);
   }
 
-  @Patch(':id') // API sẽ là: PATCH /users/UUID
+  @Patch(':id') // PATCH /users/:id
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
     return this.usersService.update(id, updateUserDto);
   }
 
-  @Delete(':id') // API sẽ là: DELETE /users/UUID
+  @Delete(':id') // DELETE /users/:id
   remove(@Param('id') id: string) {
     return this.usersService.remove(id);
   }

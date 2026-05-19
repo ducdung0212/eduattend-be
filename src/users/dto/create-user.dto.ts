@@ -17,9 +17,4 @@ export class CreateUserDto {
     @IsNotEmpty({message:'Role không được để trống'})
     @IsEnum(['admin','lecturer','student'],{message:'Role không hợp lệ'})
     role!:'admin'|'lecturer'|'student';
-
-    //Có thể xem lại bỏ để trích mssv tự động từ email hoặc thêm sinh viên thì tự tạo acc luôn
-    @IsOptional()
-    @IsString()
-    student_code?:string;
 }
