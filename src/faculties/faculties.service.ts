@@ -2,11 +2,14 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { CreateFacultyDto } from './dto/create-faculty.dto';
 import { UpdateFacultyDto } from './dto/update-faculty.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 
-const FACULTY_SELECT = {
+const FACULTY_SELECT: Prisma.FacultySelect = {
   faculty_code: true,
-  name: true
-} as const;
+  name: true,
+  created_at: true,
+  updated_at: true,
+};
 
 @Injectable()
 export class FacultiesService {
@@ -19,8 +22,7 @@ export class FacultiesService {
     if (existing) {
       throw new ConflictException('Mã khoa này đã tồn tại!');
     }
-    
-    // Đã thêm await chuẩn chỉ
+
     const faculty = await this.prisma.faculty.create({
       data: createFacultyDto,
       select: FACULTY_SELECT,
@@ -34,21 +36,22 @@ export class FacultiesService {
 
   async findAll(query: {
     search?: string;
-    page: number;
-    limit: number;
-  }) {
-    const { search, page, limit } = query;
-
+    page?: number;
+    limit?: number;
+  } = {}) {
+    const { search } = query;
+    const page = Number(query.page) || 1;
+    const limit = Number(query.limit) || 100;
     const take = Math.min(limit, 100);
     const skip = (page - 1) * take;
-    
-    const where = {
-      OR: search
-      ? [
-          { faculty_code: { contains: search, mode: 'insensitive' as const } },
-          { name: { contains: search, mode: 'insensitive' as const } }
+
+    const where: Prisma.FacultyWhereInput = {
+      ...(search ? {
+        OR: [
+          { faculty_code: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } }
         ]
-      : undefined,
+      } : {})
     };
 
     const [data, total] = await Promise.all([
@@ -68,7 +71,7 @@ export class FacultiesService {
         total,
         page,
         limit: take,
-        totalPages: Math.ceil(total / take),
+        totalPage: Math.ceil(total / take),
         hasNextPage: page < Math.ceil(total / take),
         hasPrevPage: page > 1
       }
@@ -84,14 +87,12 @@ export class FacultiesService {
     if (!faculty) {
       throw new NotFoundException(`Không tìm thấy khoa với mã khoa: ${faculty_code}`);
     }
-    return faculty; // Trả về data thô để hàm update/remove dễ tái sử dụng
+    return faculty;
   }
 
   async update(faculty_code: string, updateFacultyDto: UpdateFacultyDto) {
-    // Check xem khoa có tồn tại không trước khi update
-    await this.findOne(faculty_code); 
+    await this.findOne(faculty_code);
 
-    // Đã thêm await chuẩn chỉ
     const updatedFaculty = await this.prisma.faculty.update({
       where: { faculty_code },
       data: updateFacultyDto,
@@ -110,9 +111,9 @@ export class FacultiesService {
     await this.prisma.faculty.delete({
       where: { faculty_code }
     });
-    
-    return { 
-      message: 'Xóa khoa thành công' 
+
+    return {
+      message: 'Xóa khoa thành công'
     };
   }
 }

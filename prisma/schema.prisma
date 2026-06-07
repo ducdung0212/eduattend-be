@@ -6,6 +6,159 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  name              String
+  email             String         @unique
+  role              Role           @default(lecturer)
+  password          String
+  remember_token    String?        @db.VarChar(100)
+  created_at        DateTime       @default(now()) @db.Timestamp(0)
+  updated_at        DateTime       @updatedAt @db.Timestamp(0)
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lecturer          Lecturer?
+  student           Student?
+
+  @@map("users")
+}
+
+model Faculty {
+  faculty_code String     @id @db.VarChar(20)
+  name         String     @unique @db.VarChar(100)
+  created_at   DateTime   @default(now()) @db.Timestamp(0)
+  updated_at   DateTime   @updatedAt @db.Timestamp(0)
+  classes      Class[]
+  lecturers    Lecturer[]
+
+  @@map("faculties")
+}
+
+model Class {
+  class_code   String    @id @db.VarChar(20)
+  name   String    @db.VarChar(100)
+  faculty_code String    @db.VarChar(20)
+  created_at   DateTime  @default(now()) @db.Timestamp(0)
+  updated_at   DateTime  @updatedAt @db.Timestamp(0)
+  faculty      Faculty   @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
+  students     Student[]
+
+  @@index([faculty_code])
+  @@map("classes")
+}
+
+model Subject {
+  subject_code   String         @id @db.VarChar(20)
+  name           String         @db.VarChar(100)
+  created_at     DateTime       @default(now()) @db.Timestamp(0)
+  updated_at     DateTime       @updatedAt @db.Timestamp(0)
+  exam_schedules ExamSchedule[]
+
+  @@map("subjects")
+}
+
+model Student {
+  student_code       String             @id @db.VarChar(20)
+  class_code         String             @db.VarChar(20)
+  last_name          String             @db.VarChar(70)
+  first_name         String             @db.VarChar(30)
+  email              String            @unique @db.VarChar(100)
+  phone              String?            @unique @db.VarChar(15)
+  created_at         DateTime           @default(now()) @db.Timestamp(0)
+  updated_at         DateTime           @updatedAt @db.Timestamp(0)
+  user_id            String?            @unique @db.Uuid
+  attendance_records AttendanceRecord[]
+  photos             StudentPhoto[]
+  class              Class             @relation(fields: [class_code], references: [class_code], onDelete: Restrict)
+  user               User?              @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([class_code])
+  @@map("students")
+}
+
+model Lecturer {
+  lecturer_code     String           @id @db.VarChar(20)
+  last_name         String          @db.VarChar(70)
+  first_name        String          @db.VarChar(30)
+  email             String          @unique @db.VarChar(100)
+  phone             String?         @unique @db.VarChar(15)
+  faculty_code      String          @db.VarChar(20)
+  created_at        DateTime         @default(now()) @db.Timestamp(0)
+  updated_at        DateTime         @updatedAt @db.Timestamp(0)
+  user_id           String?          @unique @db.Uuid
+  supervising_exams ExamSupervisor[]
+  faculty           Faculty         @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
+  user              User?           @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([faculty_code])
+  @@map("lecturers")
+}
+
+model ExamSchedule {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subject_code       String             @db.VarChar(20)
+  start_time         DateTime           @db.Timestamptz(3)
+  duration           Int
+  room_code          String             @db.VarChar(20)
+  note               String?
+  created_at         DateTime           @default(now()) @db.Timestamp(0)
+  updated_at         DateTime           @updatedAt @db.Timestamp(0)
+  attendance_records AttendanceRecord[]
+  subject            Subject            @relation(fields: [subject_code], references: [subject_code], onDelete: Restrict)
+  room               Room               @relation(fields: [room_code], references: [room_code], onDelete: Restrict)
+  supervisors        ExamSupervisor[]
+
+  @@unique([subject_code, start_time, room_code])
+  @@index([room_code])
+  @@index([start_time])
+  @@map("exam_schedules")
+}
+
+model ExamSupervisor {
+  lecturer_code    String       @db.VarChar(20)
+  created_at       DateTime     @default(now()) @db.Timestamp(0)
+  updated_at       DateTime     @updatedAt @db.Timestamp(0)
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  exam_schedule_id String       @db.Uuid
+  exam_schedule    ExamSchedule @relation(fields: [exam_schedule_id], references: [id], onDelete: Cascade)
+  lecturer         Lecturer     @relation(fields: [lecturer_code], references: [lecturer_code], onDelete: Cascade)
+
+  @@index([exam_schedule_id])
+  @@index([lecturer_code])
+  @@map("exam_supervisors")
+}
+
+model AttendanceRecord {
+  student_code       String             @db.VarChar(20)
+  attendance_method  AttendanceMethod?
+  rekognition_result RekognitionResult?
+  confidence         Decimal?           @db.Decimal(5, 2)
+  attendance_time    DateTime?          @db.Timestamp(0)
+  created_at         DateTime           @default(now()) @db.Timestamp(0)
+  updated_at         DateTime           @updatedAt @db.Timestamp(0)
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  exam_schedule_id   String             @db.Uuid
+  exam_schedule      ExamSchedule       @relation(fields: [exam_schedule_id], references: [id], onDelete: Cascade)
+  student            Student            @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
+
+  @@unique([student_code, exam_schedule_id])
+  @@index([exam_schedule_id])
+  @@index([student_code])
+  @@map("attendance_records")
+}
+
+model StudentPhoto {
+  student_code        String    @db.VarChar(20)
+  image_url           String    @db.VarChar(255)
+  is_active           Boolean   @default(true)
+  created_at          DateTime  @default(now()) @db.Timestamp(0)
+  updated_at          DateTime  @updatedAt @db.Timestamp(0)
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student             Student   @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
+
+  @@index([student_code])
+  @@index([is_active])
+  @@map("student_photos")
+}
+
 enum Role {
   admin
   lecturer
@@ -23,226 +176,12 @@ enum RekognitionResult {
   unknown
 }
 
-// ---------------------------------------------------------
-// 1. MODULE TÀI KHOẢN (AUTH)
-// ---------------------------------------------------------
-
-// ---------------------------------------------------------
-// 1. MODULE TÀI KHOẢN (AUTH)
-// ---------------------------------------------------------
-
-model User {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name              String
-  email             String    @unique
-  email_verified_at DateTime? @db.Timestamp(0)
-  password          String
-  role              Role      @default(lecturer)
-  remember_token    String?   @db.VarChar(100)
-  
-  created_at        DateTime? @default(now()) @db.Timestamp(0)
-  updated_at        DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết 1-1
-  student           Student?
-  lecturer          Lecturer?
-
-  // Liên kết đến các bảng khác do User thao tác
-  opened_windows    FaceRegistrationWindow[]
-  uploaded_photos   StudentPhoto[] @relation("UploadedPhotos")
-  approved_photos   StudentPhoto[] @relation("ApprovedPhotos")
-
-  @@map("users")
-}
-
-// ---------------------------------------------------------
-// 2. MODULE QUẢN LÝ THÔNG TIN ĐÀO TẠO
-// ---------------------------------------------------------
-
-model Faculty {
-  faculty_code String    @id @db.VarChar(20)
-  name         String    @unique @db.VarChar(100)
-  created_at   DateTime? @default(now()) @db.Timestamp(0)
-  updated_at   DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  classes      Class[]
-  lecturers    Lecturer[]
-
-  @@map("faculties")
-}
-
-model Class {
-  class_code   String    @id @db.VarChar(20)
-  class_name   String    @db.VarChar(100)
-  faculty_code String    @db.VarChar(20)
-  created_at   DateTime? @default(now()) @db.Timestamp(0)
-  updated_at   DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  faculty      Faculty   @relation(fields: [faculty_code], references: [faculty_code], onDelete: Cascade)
-  students     Student[]
-
-  @@index([faculty_code])
-  @@map("classes")
-}
-
-model Subject {
-  subject_code String    @id @db.VarChar(20)
-  name         String    @db.VarChar(100)
-  credit       Int?
-  created_at   DateTime? @default(now()) @db.Timestamp(0)
-  updated_at   DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
+model Room {
+  room_code      String         @id @db.VarChar(20)
+  name           String         @db.VarChar(100)
+  created_at     DateTime       @default(now()) @db.Timestamp(0)
+  updated_at     DateTime       @updatedAt @db.Timestamp(0)
   exam_schedules ExamSchedule[]
 
-  @@map("subjects")
-}
-
-// ---------------------------------------------------------
-// 3. MODULE NGƯỜI DÙNG (STUDENT & LECTURER)
-// ---------------------------------------------------------
-
-model Student {
-  student_code String    @id @db.VarChar(20)
-  user_id      String?   @unique @db.Uuid // Liên kết với bảng users
-  class_code   String?   @db.VarChar(20)
-  class_name   String?   @db.VarChar(191)
-  last_name    String?   @db.VarChar(70)
-  first_name   String?   @db.VarChar(30)
-  email        String?   @unique @db.VarChar(100)
-  phone        String?   @unique @db.VarChar(15)
-  created_at   DateTime? @default(now()) @db.Timestamp(0)
-  updated_at   DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  user               User?              @relation(fields: [user_id], references: [id], onDelete: SetNull)
-  class              Class?             @relation(fields: [class_code], references: [class_code], onDelete: SetNull)
-  photos             StudentPhoto[]
-  attendance_records AttendanceRecord[]
-
-  @@index([class_code])
-  @@map("students")
-}
-
-model Lecturer {
-  lecturer_code String    @id @db.VarChar(20)
-  user_id       String?   @unique @db.Uuid // Liên kết với bảng users
-  faculty_code  String?   @db.VarChar(20)
-  last_name     String?   @db.VarChar(70)
-  first_name    String?   @db.VarChar(30)
-  email         String?   @unique @db.VarChar(100)
-  phone         String?   @db.VarChar(15)
-  created_at    DateTime? @default(now()) @db.Timestamp(0)
-  updated_at    DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  user               User?             @relation(fields: [user_id], references: [id], onDelete: SetNull)
-  faculty            Faculty?          @relation(fields: [faculty_code], references: [faculty_code], onDelete: Cascade)
-  supervising_exams  ExamSupervisor[]
-
-  @@index([faculty_code])
-  @@map("lecturers")
-}
-
-// ---------------------------------------------------------
-// 4. MODULE ĐIỂM DANH & NHẬN DIỆN KHUÔN MẶT
-// ---------------------------------------------------------
-
-model ExamSchedule {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  subject_code String    @db.VarChar(20)
-  exam_date    DateTime  @db.Date
-  exam_time    DateTime  @db.Time()
-  duration     Int
-  room         String    @db.VarChar(50)
-  note         String?
-  created_at   DateTime? @default(now()) @db.Timestamp(0)
-  updated_at   DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  subject            Subject            @relation(fields: [subject_code], references: [subject_code], onDelete: Cascade)
-  supervisors        ExamSupervisor[]
-  attendance_records AttendanceRecord[]
-
-  @@unique([subject_code, exam_date, exam_time, room])
-  @@map("exam_schedules")
-}
-
-model ExamSupervisor {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  exam_schedule_id String    @db.Uuid
-  lecturer_code    String    @db.VarChar(20)
-  created_at       DateTime? @default(now()) @db.Timestamp(0)
-  updated_at       DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  exam_schedule    ExamSchedule @relation(fields: [exam_schedule_id], references: [id], onDelete: Cascade)
-  lecturer         Lecturer     @relation(fields: [lecturer_code], references: [lecturer_code], onDelete: Cascade)
-
-  @@index([exam_schedule_id])
-  @@index([lecturer_code])
-  @@map("exam_supervisors")
-}
-
-model AttendanceRecord {
-  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  exam_schedule_id   String             @db.Uuid
-  student_code       String             @db.VarChar(20)
-  attendance_method  AttendanceMethod?  @default(face)
-  rekognition_result RekognitionResult?
-  confidence         Decimal?           @db.Decimal(5, 2)
-  attendance_time    DateTime?          @default(now()) @db.Timestamp(0)
-  created_at         DateTime?          @default(now()) @db.Timestamp(0)
-  updated_at         DateTime?          @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  exam_schedule      ExamSchedule       @relation(fields: [exam_schedule_id], references: [id], onDelete: Cascade)
-  student            Student            @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
-
-  @@unique([student_code, exam_schedule_id])
-  @@index([exam_schedule_id])
-  @@map("attendance_records")
-}
-
-model StudentPhoto {
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  student_code        String    @db.VarChar(20)
-  image_url           String    @db.VarChar(255)
-  uploaded_by_user_id String?   @db.Uuid
-  approved_by_user_id String?   @db.Uuid
-  approved_at         DateTime? @db.Timestamp(0)
-  is_active           Boolean   @default(true)
-  created_at          DateTime? @default(now()) @db.Timestamp(0)
-  updated_at          DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  student             Student   @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
-  uploader            User?     @relation("UploadedPhotos", fields: [uploaded_by_user_id], references: [id], onDelete: SetNull)
-  approver            User?     @relation("ApprovedPhotos", fields: [approved_by_user_id], references: [id], onDelete: SetNull)
-
-  @@index([student_code])
-  @@index([uploaded_by_user_id])
-  @@index([approved_by_user_id])
-  @@index([is_active])
-  @@map("student_photos")
-}
-
-model FaceRegistrationWindow {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name              String?   @db.VarChar(120)
-  starts_at         DateTime  @db.Timestamp(0)
-  ends_at           DateTime  @db.Timestamp(0)
-  is_active         Boolean   @default(true)
-  opened_by_user_id String?   @db.Uuid
-  note              String?
-  created_at        DateTime? @default(now()) @db.Timestamp(0)
-  updated_at        DateTime? @updatedAt @db.Timestamp(0)
-
-  // Liên kết
-  opener            User?     @relation(fields: [opened_by_user_id], references: [id], onDelete: SetNull)
-
-  @@index([is_active, starts_at, ends_at])
-  @@map("face_registration_windows")
+  @@map("rooms")
 }

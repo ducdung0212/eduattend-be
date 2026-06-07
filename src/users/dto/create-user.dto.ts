@@ -1,5 +1,4 @@
 import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from "class-validator";
-import { Roles } from "src/common/decorators/roles.decorator";
 
 export class CreateUserDto {
     @IsNotEmpty({message:'Tên không được để trống'})

@@ -1,8 +1,6 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { PartialType, OmitType } from '@nestjs/mapped-types';
+import { CreateFacultyDto } from './create-faculty.dto';
 
-export class UpdateFacultyDto {
-  @IsString()
-  @IsNotEmpty({ message: 'Tên khoa không được để trống' })
-  @MaxLength(100, { message: 'Tên khoa không được vượt quá 100 ký tự' })
-  name!: string;
-}
+export class UpdateFacultyDto extends PartialType(
+  OmitType(CreateFacultyDto, ['faculty_code'] as const)
+) { }

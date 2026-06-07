@@ -1,0 +1,37 @@
+import { IsEmail, IsNotEmpty, IsOptional, IsPhoneNumber, IsString, Length, Matches } from "class-validator";
+
+export class CreateStudentDto {
+    @IsNotEmpty({ message: "Mã sinh viên không được để trống" })
+    @IsString()
+    @Length(10, 11, { message: "Mã sinh viên phải gồm 10 đến 11 kí tự" })
+    @Matches(/^DH/, { message: "Mã sinh viên phải bắt đầu bằng chữ DH" })
+    student_code!: string
+
+    @IsNotEmpty({ message: "Vui lòng chọn lớp cho sinh viên" })
+    @IsString()
+    class_code!: string
+
+    @IsNotEmpty({ message: "Họ và tên đệm không được để trống" })
+    @IsString()
+    last_name!: string
+
+    @IsNotEmpty({ message: "Tên không được để trống" })
+    @IsString()
+    first_name!: string
+
+    @IsNotEmpty({ message: "Email không được để trống" })
+    @IsEmail({}, { message: "Email không đúng định dạng" })
+    email!: string;
+    
+    @IsOptional()
+    @IsPhoneNumber('VN', { message: "Số điện thoại không hợp lệ" })
+    phone?: string
+
+    @IsOptional()
+    create_account?: boolean;
+
+    @IsOptional()
+    user_id?: string | null;
+
+
+}
