@@ -5,6 +5,7 @@ import { UpdateExamSupervisorDto } from './dto/update-exam-supervisor.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/role.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { CreateExamSupervisorBulkDto } from './dto/create-exam-supervisor-bulk.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'lecturer')
@@ -32,6 +33,10 @@ export class ExamSupervisorsController {
       page: page ? +page : undefined,
       limit: limit ? +limit : undefined,
     });
+  }
+  @Post('bulk')
+  bulkCreate(@Body() dto: CreateExamSupervisorBulkDto) {
+    return this.examSupervisorsService.bulkCreate(dto);
   }
 
   @Get(':id')

@@ -3,22 +3,29 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateExamSupervisorDto } from './dto/create-exam-supervisor.dto';
 import { UpdateExamSupervisorDto } from './dto/update-exam-supervisor.dto';
 import { Prisma } from '@prisma/client';
+import { CreateExamSupervisorBulkDto } from './dto/create-exam-supervisor-bulk.dto';
+
 
 const EXAM_SUPERVISOR_SELECT: Prisma.ExamSupervisorSelect = {
   id: true,
-  lecturer_code: true,
-  exam_schedule_id: true,
   created_at: true,
   updated_at: true,
   lecturer: {
     select: {
+      lecturer_code: true,
       first_name: true,
       last_name: true,
-      faculty_code: true,
+      faculty: {
+        select: {
+          faculty_code: true,
+          name:true,
+        }
+      },
     }
   },
   exam_schedule: {
     select: {
+      id: true,
       subject_code: true,
       start_time: true,
       room_code: true,
@@ -108,7 +115,7 @@ export class ExamSupervisorsService {
         total,
         page,
         limit: take,
-        totalPage: Math.ceil(total / take),
+        totalPages: Math.ceil(total / take),
         hasNextPage: page < Math.ceil(total / take),
         hasPrevPage: page > 1
       }
@@ -155,6 +162,86 @@ export class ExamSupervisorsService {
     });
     return {
       message: "Đã xóa thành công"
+    };
+  }
+
+  async bulkCreate(dto: CreateExamSupervisorBulkDto) {
+    const { exam_schedule_id, lecturer_codes } = dto;
+
+    // 1. Loại trùng trong input
+    const uniqueCodes = Array.from(new Set(lecturer_codes.map((c) => c.trim().toUpperCase())));
+
+    // 2. Kiểm tra ca thi tồn tại
+    const schedule = await this.prisma.examSchedule.findUnique({
+      where: { id: exam_schedule_id },
+    });
+    if (!schedule) throw new NotFoundException('Không tìm thấy ca thi');
+
+    // 3. Kiểm tra giảng viên tồn tại
+    const lecturers = await this.prisma.lecturer.findMany({
+      where: { lecturer_code: { in: uniqueCodes } },
+      select: { lecturer_code: true },
+    });
+    
+    // Đưa vào Set để kiểm tra O(1) ở vòng lặp bên dưới
+    const existingLecturerCodes = new Set(lecturers.map((l) => l.lecturer_code));
+
+    // 4. Kiểm tra đã được phân công chưa (TỐI ƯU: Chỉ đem các giảng viên có thật đi kiểm tra)
+    const existingSupervisors = await this.prisma.examSupervisor.findMany({
+      where: {
+        exam_schedule_id,
+        // Dùng Array.from để chuyển Set về mảng, giảm tải số lượng ID rác gửi xuống DB
+        lecturer_code: { in: Array.from(existingLecturerCodes) }, 
+      },
+      select: { lecturer_code: true },
+    });
+    const alreadyAssigned = new Set(existingSupervisors.map((s) => s.lecturer_code));
+
+    const success: { lecturer_code: string; id: string }[] = [];
+    const failed: { lecturer_code: string; reason: string }[] = [];
+
+    const toCreate: string[] = [];
+
+    // 5. Phân loại kết quả
+    for (const code of uniqueCodes) {
+      if (!existingLecturerCodes.has(code)) {
+        failed.push({ lecturer_code: code, reason: 'Không tìm thấy giảng viên' });
+        continue;
+      }
+      if (alreadyAssigned.has(code)) {
+        failed.push({ lecturer_code: code, reason: 'Đã được phân công coi thi ca này' });
+        continue;
+      }
+      toCreate.push(code);
+    }
+
+    // 6. Thực hiện Transaction
+    if (toCreate.length > 0) {
+      await this.prisma.$transaction(
+        toCreate.map((lecturer_code) =>
+          this.prisma.examSupervisor.create({
+            data: { lecturer_code, exam_schedule_id },
+            select: { id: true, lecturer_code: true },
+          }),
+        ),
+      ).then((created) => {
+        created.forEach((c) => success.push({ lecturer_code: c.lecturer_code, id: c.id }));
+      }).catch((err) => {
+        // Nếu transaction fail toàn bộ, đánh dấu lỗi cho các code chưa xử lý
+        toCreate.forEach((code) => {
+          if (!success.find((s) => s.lecturer_code === code)) {
+            failed.push({ lecturer_code: code, reason: 'Lỗi khi tạo bản ghi' });
+          }
+        });
+      });
+    }
+
+    return {
+      message: `Đã phân công ${success.length}/${uniqueCodes.length} giám thị`,
+      data: {
+        success,
+        failed,
+      }
     };
   }
 }

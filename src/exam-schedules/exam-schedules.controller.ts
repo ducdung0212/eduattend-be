@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { ExamSchedulesService } from './exam-schedules.service';
 import { CreateExamScheduleDto } from './dto/create-exam-schedule.dto';
 import { UpdateExamScheduleDto } from './dto/update-exam-schedule.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('exam-schedules')
 export class ExamSchedulesController {
@@ -26,6 +27,27 @@ export class ExamSchedulesController {
       limit: limit ? +limit : undefined
     });
   }
+   @Post('import')
+    @UseInterceptors(FileInterceptor('file'))
+    async importLecturers(
+      @UploadedFile() file: Express.Multer.File,
+    ) {
+      // 1. Validate xem người dùng có gửi file lên không
+      if (!file) {
+        throw new BadRequestException('Vui lòng tải lên file Excel');
+      }
+  
+      // 2. Validate định dạng file (chỉ cho phép .xlsx hoặc .xls)
+      const allowedMimeTypes = [
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+        'application/vnd.ms-excel' // .xls
+      ];
+      if (!allowedMimeTypes.includes(file.mimetype)) {
+        throw new BadRequestException('Chỉ chấp nhận định dạng file Excel (.xlsx, .xls)');
+      }
+    
+      return this.examSchedulesService.importFromExcel(file.buffer);
+    }
 
   @Get(':id')
   findOne(@Param('id') id: string) {

@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { RoomsService } from './rooms.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/role.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @UseGuards(JwtAuthGuard,RolesGuard)
 @Roles('admin')
@@ -25,6 +26,26 @@ export class RoomsController {
   ) {
     return this.roomsService.findAll({search,page:page?+page:undefined,limit:limit?+limit:undefined});
   }
+  @Post('import')
+      @UseInterceptors(FileInterceptor('file'))
+      async importClasses(
+        @UploadedFile() file:Express.Multer.File
+      ){
+        if(!file){
+          throw new BadRequestException('Vui lòng tải lên file Excel');
+        }
+  
+        const allowedMimeTypes=[
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+          'application/vnd.ms-excel' // .xls
+        ];
+  
+        if(!allowedMimeTypes.includes(file.mimetype)){
+          throw new BadRequestException('Chỉ chấp nhận định dạng file Excel (.xlsx, xls');
+        }
+  
+        return this.roomsService.importFromExcel(file.buffer);
+      }
 
   @Get(':room_code')
   findOne(@Param('room_code') room_code: string) {

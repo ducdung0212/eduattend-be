@@ -95,6 +95,7 @@ model Lecturer {
 model ExamSchedule {
   id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   subject_code       String             @db.VarChar(20)
+  group              Int
   start_time         DateTime           @db.Timestamptz(3)
   duration           Int
   room_code          String             @db.VarChar(20)
@@ -179,6 +180,7 @@ enum RekognitionResult {
 model Room {
   room_code      String         @id @db.VarChar(20)
   name           String         @db.VarChar(100)
+  capacity       Int
   created_at     DateTime       @default(now()) @db.Timestamp(0)
   updated_at     DateTime       @updatedAt @db.Timestamp(0)
   exam_schedules ExamSchedule[]

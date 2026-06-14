@@ -71,7 +71,7 @@ export class FacultiesService {
         total,
         page,
         limit: take,
-        totalPage: Math.ceil(total / take),
+        totalPages: Math.ceil(total / take),
         hasNextPage: page < Math.ceil(total / take),
         hasPrevPage: page > 1
       }

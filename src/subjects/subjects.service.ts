@@ -3,6 +3,7 @@ import { CreateSubjectDto } from './dto/create-subject.dto';
 import { UpdateSubjectDto } from './dto/update-subject.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
 
 const SUBJECT_SELECT: Prisma.SubjectSelect = {
   subject_code: true,
@@ -71,7 +72,7 @@ export class SubjectsService {
         total,
         page,
         limit: take,
-        totalPage: Math.ceil(total / take),
+        totalPages: Math.ceil(total / limit),
         hasNextPage: page < Math.ceil(total / take),
         hasPrevPage: page > 1
       }
@@ -114,5 +115,93 @@ export class SubjectsService {
     return {
       message: "Xóa môn thành công"
     };
+  }
+  async importFromExcel(fileBuffer: Buffer) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(fileBuffer as any);
+    const worksheet = workbook.worksheets[0];
+
+    const getCellValue = (cell: ExcelJS.Cell): string => {
+      const val = cell.value;
+      if (val && typeof val === 'object') {
+        if ('text' in val) return String((val as any).text);
+        if ('richText' in val) return (val as any).richText.map((rt: any) => rt.text).join('');
+      }
+      return val ? String(val) : ''
+    };
+    const errorRows: { row: number; error: string }[] = [];
+    const rawRows: {
+      rowNum: number;
+      subject_code: string;
+      name: string;
+    }[] = [];
+
+    const seenCodes = new Set<string>();
+
+    for (let i = 2; i <= worksheet.rowCount; i++) {
+      const row = worksheet.getRow(i);
+      if (!row.values || (row.values as any[]).length === 0) continue;
+
+      const subject_code = getCellValue(row.getCell(1)).trim();
+      const name = getCellValue(row.getCell(2)).trim();
+
+      if (!subject_code || !name) {
+        errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã môn, tên môn)' })
+        continue;
+      }
+      if (seenCodes.has(subject_code)) {
+        errorRows.push({ row: i, error: `Mã môn '${subject_code}' bị trùng lặp trong file` })
+        continue;
+      }
+      rawRows.push({ rowNum: i, subject_code, name });
+    }
+    if (rawRows.length === 0) {
+      return {
+        message: 'Không có dữ liệu hợp lệ để import',
+        data: {
+          successCount: 0,
+          errorCount: errorRows.length,
+          errorMessage: errorRows.map(e => `Dòng ${e.row}: ${e.error}`)
+        }
+      }
+    }
+    const allSubjectCodes = [...new Set(rawRows.map(r => r.subject_code))];
+    const existingSubjectCodes = await this.prisma.subject.findMany({
+      where: { subject_code: { in: allSubjectCodes } },
+      select: { subject_code: true }
+    })
+
+
+    const existingCodeSet = new Set(existingSubjectCodes.map(s => s.subject_code));
+
+    const validRows = rawRows.filter(r => {
+      if (existingCodeSet.has(r.subject_code)) {
+        errorRows.push({ row: r.rowNum, error: `Mã môn '${r.subject_code}' đã tồn tại` })
+        return false;
+      }
+      return true;
+    })
+
+    if (validRows.length > 0) {
+      await this.prisma.subject.createMany({
+        data: validRows.map(({ rowNum, ...data }) => data),
+      });
+    }
+
+    errorRows.sort((a, b) => a.row - b.row);
+    const errorMessages = errorRows.map(e => `Dòng ${e.row}: ${e.error}`);
+
+    return {
+      message: errorRows.length > 0
+        ? `Import hoàn tất với một số lỗi. Thành công: ${validRows.length} dòng. Thất bại: ${errorRows.length} dòng.`
+        : `Import thành công toàn bộ ${validRows.length} dòng!`,
+      data: {
+        successCount: validRows.length,
+        errorCount: errorRows.length,
+        errorMessages,
+        rawErrors: errorRows,
+      },
+    };
+
   }
 }

@@ -7,6 +7,7 @@ import { RolesGuard } from 'src/common/guards/role.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CheckInDto } from './dto/check-in.dto';
+import { CreateAttendanceRecordBulkDto } from './dto/create-attendance-record-bulk.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('admin', 'lecturer')
@@ -22,15 +23,25 @@ export class AttendanceRecordsController {
   @Get()
   findAll(
     @Query('search') search?: string,
+    @Query('student_code') student_code?: string,
+    @Query('exam_schedule_id') exam_schedule_id?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.attendanceRecordsService.findAll({
       search,
+      student_code,
+      exam_schedule_id,
       page: page ? +page : undefined,
       limit: limit ? +limit : undefined,
     });
   }
+
+  @Post('bulk')
+    bulkCreate(@Body() dto: CreateAttendanceRecordBulkDto) {
+      return this.attendanceRecordsService.bulkCreate(dto);
+    }
+    
   @Post('check-in')
   @UseInterceptors(FileInterceptor('image'))
   async checkIn(

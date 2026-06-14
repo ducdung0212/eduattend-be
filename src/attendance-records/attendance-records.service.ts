@@ -5,10 +5,16 @@ import { UpdateAttendanceRecordDto } from './dto/update-attendance-record.dto';
 import { Prisma } from '@prisma/client';
 import { LambdaService } from 'src/aws/lambda.service';
 import { ConfigService } from '@nestjs/config';
+import { CreateAttendanceRecordBulkDto } from './dto/create-attendance-record-bulk.dto';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const ATTENDANCE_RECORD_SELECT: Prisma.AttendanceRecordSelect = {
   id: true,
-  student_code: true,
   exam_schedule_id: true,
   attendance_method: true,
   rekognition_result: true,
@@ -18,6 +24,7 @@ const ATTENDANCE_RECORD_SELECT: Prisma.AttendanceRecordSelect = {
   updated_at: true,
   student: {
     select: {
+      student_code: true,
       first_name: true,
       last_name: true,
       class: {
@@ -41,10 +48,11 @@ export class AttendanceRecordsService {
   ) {
     this.confidenceThreshold = configService.get<number>('FACE_CONFIDENCE_THRESHOLD', 95);
   }
-  async checkIn(/*exam_schedule_id: string,*/ imageBuffer: Buffer) {
+
+  async checkIn(imageBuffer: Buffer) {
     const imageBase64 = imageBuffer.toString('base64');
 
-    const result = await this.lamdaService.verifyFace(imageBase64,/*exam_schedule_id*/);
+    const result = await this.lamdaService.verifyFace(imageBase64);
 
     if (!result.success || !result.data) {
       throw new BadRequestException(
@@ -78,10 +86,8 @@ export class AttendanceRecordsService {
       `Check-in thành công: ${student.student_code} | confidence: ${confidence} | faceId: ${face_id}`,
     );
 
-
     // Sửa attendance vào DB qua Prisma
     //TODO
-    // });
 
     // Placeholder trả về khi chưa có Prisma
     return {
@@ -119,10 +125,12 @@ export class AttendanceRecordsService {
 
   async findAll(query: {
     search?: string;
+    student_code?: string; // Đã sửa thành optional (?)
+    exam_schedule_id?: string;
     page?: number;
     limit?: number;
   } = {}) {
-    const { search } = query;
+    const { search, exam_schedule_id, student_code } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
 
@@ -130,12 +138,15 @@ export class AttendanceRecordsService {
     const skip = (page - 1) * take;
 
     const where: Prisma.AttendanceRecordWhereInput = {
+      ...(student_code ? { student_code } : {}),
+      ...(exam_schedule_id ? { exam_schedule_id } : {}),
       ...(search ? {
         student: {
           OR: [
+            { student_code: { contains: search, mode: 'insensitive' } }, 
             { first_name: { contains: search, mode: 'insensitive' } },
             { last_name: { contains: search, mode: 'insensitive' } },
-            { class_code: { contains: search, mode: 'insensitive' } },
+            { class_code: { contains: search, mode: 'insensitive' } }, // Fix nhẹ nếu schema bạn search class_code qua relation
           ]
         }
       } : {})
@@ -157,7 +168,7 @@ export class AttendanceRecordsService {
         total,
         page,
         limit: take,
-        totalPage: Math.ceil(total / take),
+        totalPages: Math.ceil(total / take),
         hasNextPage: page < Math.ceil(total / take),
         hasPrevPage: page > 1
       }
@@ -196,6 +207,90 @@ export class AttendanceRecordsService {
     });
     return {
       message: "Đã xóa thành công"
+    };
+  }
+   
+  async bulkCreate(dto: CreateAttendanceRecordBulkDto) {
+    const { exam_schedule_id, student_codes } = dto;
+
+    // 1. Loại trùng trong input
+    const uniqueCodes = Array.from(new Set(student_codes.map((c) => c.trim().toUpperCase())));
+
+    // 2. Kiểm tra ca thi tồn tại và lấy thời gian thi
+    const schedule = await this.prisma.examSchedule.findUnique({
+      where: { id: exam_schedule_id },
+    });
+    if (!schedule) throw new NotFoundException('Không tìm thấy ca thi');
+
+    // 3. Kiểm tra sinh viên tồn tại (1 query)
+    const students = await this.prisma.student.findMany({
+      where: { student_code: { in: uniqueCodes } },
+      select: { student_code: true },
+    });
+    const validStudentCodes = new Set(students.map((s) => s.student_code));
+
+    // 4. Tính toán mốc 00:00:00 và 23:59:59 của ngày thi theo giờ Việt Nam
+    const startOfDayVN = dayjs(schedule.start_time).tz("Asia/Ho_Chi_Minh").startOf('day').toDate();
+    const endOfDayVN = dayjs(schedule.start_time).tz("Asia/Ho_Chi_Minh").endOf('day').toDate();
+
+    // 5. Kiểm tra xem sinh viên nào ĐÃ CÓ ca thi trong ngày hôm đó (bao gồm cả ca hiện tại)
+    const busyStudents = await this.prisma.attendanceRecord.findMany({
+      where: {
+        student_code: { in: Array.from(validStudentCodes) },
+        exam_schedule: {
+          start_time: {
+            gte: startOfDayVN,
+            lte: endOfDayVN,
+          }
+        }
+      },
+      select: { student_code: true },
+    });
+    const busyStudentCodes = new Set(busyStudents.map((s) => s.student_code));
+
+    // 6. Phân loại kết quả
+    const success: { student_code: string; id: string }[] = [];
+    const failed: { student_code: string; reason: string }[] = [];
+    const toCreate: string[] = [];
+
+    for (const code of uniqueCodes) {
+      if (!validStudentCodes.has(code)) {
+        failed.push({ student_code: code, reason: 'Không tìm thấy sinh viên' });
+        continue;
+      }
+      if (busyStudentCodes.has(code)) {
+        failed.push({ student_code: code, reason: 'Đã có lịch thi trong ngày hôm nay' });
+        continue;
+      }
+      toCreate.push(code);
+    }
+
+    // 7. Thực hiện Transaction để Insert và lấy về ID
+    if (toCreate.length > 0) {
+      await this.prisma.$transaction(
+        toCreate.map((student_code) =>
+          this.prisma.attendanceRecord.create({
+            data: { student_code, exam_schedule_id },
+            select: { id: true, student_code: true },
+          }),
+        ),
+      ).then((created) => {
+        created.forEach((c) => success.push({ student_code: c.student_code, id: c.id }));
+      }).catch((err) => {
+        toCreate.forEach((code) => {
+          if (!success.find((s) => s.student_code === code)) {
+            failed.push({ student_code: code, reason: 'Lỗi khi tạo bản ghi' });
+          }
+        });
+      });
+    }
+
+    return {
+      message: `Đã thêm ${success.length}/${uniqueCodes.length} sinh viên`,
+      data: {
+        success,
+        failed,
+      }
     };
   }
 }
