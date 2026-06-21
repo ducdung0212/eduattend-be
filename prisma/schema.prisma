@@ -105,7 +105,7 @@ model ExamSchedule {
   attendance_records AttendanceRecord[]
   subject            Subject            @relation(fields: [subject_code], references: [subject_code], onDelete: Restrict)
   room               Room               @relation(fields: [room_code], references: [room_code], onDelete: Restrict)
-  supervisors        ExamSupervisor[]
+  exam_supervisors        ExamSupervisor[]
 
   @@unique([subject_code, start_time, room_code])
   @@index([room_code])
@@ -149,14 +149,12 @@ model AttendanceRecord {
 model StudentPhoto {
   student_code        String    @db.VarChar(20)
   image_url           String    @db.VarChar(255)
-  is_active           Boolean   @default(true)
   created_at          DateTime  @default(now()) @db.Timestamp(0)
   updated_at          DateTime  @updatedAt @db.Timestamp(0)
   id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   student             Student   @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
 
   @@index([student_code])
-  @@index([is_active])
   @@map("student_photos")
 }
 

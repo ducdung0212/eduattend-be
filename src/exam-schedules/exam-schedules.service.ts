@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateExamScheduleDto } from './dto/create-exam-schedule.dto';
 import { UpdateExamScheduleDto } from './dto/update-exam-schedule.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
-import * as dayjs from 'dayjs';
+import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 
@@ -34,6 +34,39 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
 @Injectable()
 export class ExamSchedulesService {
   constructor(private prisma: PrismaService) { }
+
+  private async checkRoomAvailability(room_code:string,start_time:Date|string,duration:number,excludeScheduleId?:string){
+    const newStart=dayjs(start_time);
+    const newEnd=newStart.add(duration,'minute');
+
+    const queryStart=newStart.subtract(1,'day').toDate();
+    const queryEnd=newStart.add(1,'day').toDate();
+    
+    const existingSchedules=await this.prisma.examSchedule.findMany({
+      where:{
+        room_code:room_code,
+        start_time:{
+          gte:queryStart,
+          lte:queryEnd,
+        },
+        ...(excludeScheduleId?{id:{not:excludeScheduleId}}:{})
+      },
+      select:{
+        start_time:true,
+        duration:true
+      }
+    })
+
+    const isOverlap=existingSchedules.some(schedule=>{
+      const existingStart=dayjs(schedule.start_time);
+      const existingEnd=existingStart.add(schedule.duration,'minute');
+
+      return newStart.isBefore(existingEnd) && newEnd.isAfter(existingStart);
+    });
+    if (isOverlap) {
+      throw new ConflictException("Phòng thi này đã được xếp lịch trùng với thời gian bạn chọn");
+    }
+  }
   async create(createExamScheduleDto: CreateExamScheduleDto) {
     const existingSubject = await this.prisma.subject.findUnique({
       where: { subject_code: createExamScheduleDto.subject_code }
@@ -47,6 +80,11 @@ export class ExamSchedulesService {
     if (!existingRoom) {
       throw new NotFoundException("Không tồn tại phòng")
     }
+    await this.checkRoomAvailability(
+      createExamScheduleDto.room_code,
+      createExamScheduleDto.start_time,
+      createExamScheduleDto.duration
+    )
     const examSchedule = await this.prisma.examSchedule.create({
       data: createExamScheduleDto,
       select: EXAM_SCHEDULE_SELECT
@@ -57,13 +95,15 @@ export class ExamSchedulesService {
     }
   }
 
-  async findAll(query: {
+ async findAll(query: {
     search?: string,
-    start_time?: string, // FE gửi dạng 'YYYY-MM-DD'
+    start_time?: string,
     page?: number,
     limit?: number,
+    student_code?:string,
+    lecturer_code?:string
   } = {}) {
-    const { search, start_time } = query;
+    const { search, start_time, student_code,lecturer_code } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
 
@@ -81,28 +121,61 @@ export class ExamSchedulesService {
       } : {}),
       start_time: start_time
         ? {
-            // Ép chuỗi ngày từ FE về chuẩn múi giờ VN, sau đó lấy mốc đầu và cuối ngày
             gte: dayjs.tz(start_time, "Asia/Ho_Chi_Minh").startOf('day').toDate(),
             lte: dayjs.tz(start_time, "Asia/Ho_Chi_Minh").endOf('day').toDate(),
           }
-        : undefined
+        : undefined,
+        // Điều kiện lọc theo Sinh Viên (Lấy các ca thi mà sinh viên này có tên trong danh sách điểm danh)
+      ...(student_code ? {
+        attendance_records: {
+          some: {
+            student_code: student_code
+          }
+        }
+      } : {}),
+
+      // Điều kiện lọc theo Giám thị (Lấy các ca thi mà giảng viên này được phân công gác thi)
+      ...(lecturer_code ? {
+        exam_supervisors: {
+          some: {
+            lecturer_code: lecturer_code
+          }
+        }
+      } : {})
     };
 
-    const [data, total] = await Promise.all([
+    const [rawExamSchedules, total] = await Promise.all([
       this.prisma.examSchedule.findMany({
         where,
-        select: EXAM_SCHEDULE_SELECT, // Cấu trúc select bạn đã định nghĩa
+        select: {
+          ...EXAM_SCHEDULE_SELECT, 
+          _count: {
+            select: {
+              attendance_records: true, 
+              exam_supervisors: true,
+            }
+          }
+        },
         skip,
         take,
         orderBy: {
           start_time: 'asc'
         }
       }),
-      this.prisma.examSchedule.count({ where })
+      this.prisma.examSchedule.count({ where }),
     ]);
 
+    const data = rawExamSchedules.map(schedule => {
+      const { _count, ...scheduleData } = schedule; 
+      return {
+        ...scheduleData,
+        attendance_count: _count?.attendance_records || 0,
+        supervisor_count: _count?.exam_supervisors || 0,
+      };
+    });
+
     return {
-      data,
+      data, // Bây giờ data là 1 mảng đã gộp sẵn số lượng đếm bên trong từng object
       meta: {
         total,
         page,
@@ -112,12 +185,11 @@ export class ExamSchedulesService {
         hasPrevPage: page > 1,
       }
     };
-  }
-
+}
   async findOne(id: string) {
     const examSchedule = await this.prisma.examSchedule.findUnique({
       where: { id },
-      select: EXAM_SCHEDULE_SELECT
+      select: {id:true}
     })
     if (!examSchedule) {
       throw new NotFoundException("Không tìm thấy ca thi")
@@ -126,7 +198,14 @@ export class ExamSchedulesService {
   }
 
   async update(id: string, updateExamScheduleDto: UpdateExamScheduleDto) {
-    await this.findOne(id);
+    // Lấy thông tin ca thi hiện tại từ DB để đối chiếu
+    const currentSchedule = await this.prisma.examSchedule.findUnique({
+      where: { id }
+    });
+    
+    if (!currentSchedule) {
+      throw new NotFoundException("Không tìm thấy ca thi");
+    }
 
     if (updateExamScheduleDto.subject_code) {
       const existingSubject = await this.prisma.subject.findUnique({
@@ -140,6 +219,22 @@ export class ExamSchedulesService {
         where: { room_code: updateExamScheduleDto.room_code }
       });
       if (!existingRoom) throw new NotFoundException("Không tồn tại phòng");
+    }
+
+    // TIẾN HÀNH KIỂM TRA TRÙNG LỊCH CHO UPDATE
+    // Ưu tiên lấy data mới từ DTO, nếu DTO không truyền lên thì dùng data cũ
+    const targetRoomCode = updateExamScheduleDto.room_code ?? currentSchedule.room_code;
+    const targetStartTime = updateExamScheduleDto.start_time ?? currentSchedule.start_time;
+    const targetDuration = updateExamScheduleDto.duration ?? currentSchedule.duration;
+
+    // Chỉ check lại sự khả dụng nếu có tác động đến cấu hình phòng, thời gian thi hoặc thời lượng thi
+    if (
+      updateExamScheduleDto.room_code !== undefined || 
+      updateExamScheduleDto.start_time !== undefined || 
+      updateExamScheduleDto.duration !== undefined
+    ) {
+      // Nhớ truyền 'id' vào tham số thứ 4 để loại trừ chính ca thi này lúc kiểm tra DB
+      await this.checkRoomAvailability(targetRoomCode, targetStartTime, targetDuration, id);
     }
 
     const examSchedule = await this.prisma.examSchedule.update({

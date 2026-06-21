@@ -4,8 +4,9 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import * as dotenv from 'dotenv'; 
 
 dotenv.config(); 
+
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy,'jwt') {
+export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor() {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -16,11 +17,13 @@ export class JwtStrategy extends PassportStrategy(Strategy,'jwt') {
 
   // Hàm này tự động chạy nếu token hợp lệ
   async validate(payload: any) {
-    // Trả về thông tin gì thì request.user sẽ có thông tin đó
+    // request.user giờ đây sẽ mang đầy đủ cả mã sinh viên và giảng viên (nếu có)
     return { 
       id: payload.sub, 
       email: payload.email, 
-      role: payload.role 
+      role: payload.role,
+      student_code: payload.student_code,
+      lecturer_code: payload.lecturer_code
     };
   }
 }

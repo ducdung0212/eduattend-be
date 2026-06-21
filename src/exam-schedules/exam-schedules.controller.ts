@@ -18,36 +18,41 @@ export class ExamSchedulesController {
     @Query('search') search?: string,
     @Query('start_time') start_time?: string,
     @Query('page') page?: string,
-    @Query('limit') limit?: string
+    @Query('limit') limit?: string,
+    @Query('student_code') student_code?: string,
+    @Query('lecturer_code') lecturer_code?: string
+
   ) {
     return this.examSchedulesService.findAll({
       search,
       start_time,
       page: page ? +page : undefined,
-      limit: limit ? +limit : undefined
+      limit: limit ? +limit : undefined,
+      student_code,
+      lecturer_code
     });
   }
-   @Post('import')
-    @UseInterceptors(FileInterceptor('file'))
-    async importLecturers(
-      @UploadedFile() file: Express.Multer.File,
-    ) {
-      // 1. Validate xem người dùng có gửi file lên không
-      if (!file) {
-        throw new BadRequestException('Vui lòng tải lên file Excel');
-      }
-  
-      // 2. Validate định dạng file (chỉ cho phép .xlsx hoặc .xls)
-      const allowedMimeTypes = [
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-        'application/vnd.ms-excel' // .xls
-      ];
-      if (!allowedMimeTypes.includes(file.mimetype)) {
-        throw new BadRequestException('Chỉ chấp nhận định dạng file Excel (.xlsx, .xls)');
-      }
-    
-      return this.examSchedulesService.importFromExcel(file.buffer);
+  @Post('import')
+  @UseInterceptors(FileInterceptor('file'))
+  async importLecturers(
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    // 1. Validate xem người dùng có gửi file lên không
+    if (!file) {
+      throw new BadRequestException('Vui lòng tải lên file Excel');
     }
+
+    // 2. Validate định dạng file (chỉ cho phép .xlsx hoặc .xls)
+    const allowedMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel' // .xls
+    ];
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException('Chỉ chấp nhận định dạng file Excel (.xlsx, .xls)');
+    }
+
+    return this.examSchedulesService.importFromExcel(file.buffer);
+  }
 
   @Get(':id')
   findOne(@Param('id') id: string) {
