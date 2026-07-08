@@ -1,9 +1,13 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseInterceptors, UploadedFile, BadRequestException, UseGuards } from '@nestjs/common';
 import { ExamSchedulesService } from './exam-schedules.service';
 import { CreateExamScheduleDto } from './dto/create-exam-schedule.dto';
 import { UpdateExamScheduleDto } from './dto/update-exam-schedule.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
-
+import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { RolesGuard } from 'src/common/guards/role.guard';
+import { Roles } from 'src/common/decorators/roles.decorator';
+@UseGuards(JwtAuthGuard,RolesGuard)
+@Roles('admin')
 @Controller('exam-schedules')
 export class ExamSchedulesController {
   constructor(private readonly examSchedulesService: ExamSchedulesService) { }
@@ -14,14 +18,15 @@ export class ExamSchedulesController {
   }
 
   @Get()
+  @Roles('admin', 'lecturer', 'student')
   findAll(
     @Query('search') search?: string,
     @Query('start_time') start_time?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('student_code') student_code?: string,
-    @Query('lecturer_code') lecturer_code?: string
-
+    @Query('lecturer_code') lecturer_code?: string,
+    @Query('exam_period_id') exam_period_id?: string,
   ) {
     return this.examSchedulesService.findAll({
       search,
@@ -29,9 +34,29 @@ export class ExamSchedulesController {
       page: page ? +page : undefined,
       limit: limit ? +limit : undefined,
       student_code,
-      lecturer_code
+      lecturer_code,
+      exam_period_id,
     });
   }
+
+  @Get('ongoing')
+  @Roles('admin', 'lecturer')
+  findOngoing(
+    @Query('search') search?: string,
+    @Query('exam_period_id') exam_period_id?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('lecturer_code') lecturer_code?:string,
+  ) {
+    return this.examSchedulesService.findOngoing({ 
+      search, 
+      exam_period_id,
+      page: page ? +page : undefined,
+      limit: limit ? +limit : undefined,
+      lecturer_code:lecturer_code?lecturer_code:undefined
+    });
+  }
+
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
   async importLecturers(

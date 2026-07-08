@@ -15,6 +15,7 @@ import { AttendanceRecordsModule } from './attendance-records/attendance-records
 import { ExamSupervisorsModule } from './exam-supervisors/exam-supervisors.module';
 import { AwsModule } from './aws/aws.module';
 import { StudentPhotosModule } from './student_photos/student-photos.module';
+import { ExamPeriodsModule } from './exam-periods/exam-periods.module';
 
 @Module({
   imports: [
@@ -31,7 +32,8 @@ import { StudentPhotosModule } from './student_photos/student-photos.module';
     AttendanceRecordsModule,
     ExamSupervisorsModule,
     AwsModule,
-    StudentPhotosModule
+    StudentPhotosModule,
+    ExamPeriodsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

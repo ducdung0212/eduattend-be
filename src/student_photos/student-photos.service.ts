@@ -24,13 +24,11 @@ export class StudentPhotosService {
         const successResults = s3Results.filter((r) => r.success && r.s3Url);
 
         if (successResults.length === 0) {
-            this.logger.warn(`[1] Không có file nào hợp lệ trên S3, trả về kết quả luôn.`);
             return s3Results;
         }
 
         // Ép kiểu In Hoa toàn bộ để tránh lỗi case-sensitivity khi query DB
         const student_codes = [...new Set(successResults.map((r) => r.student_code.toUpperCase()))];
-        this.logger.debug(`[2] Danh sách MSSV cần check DB: ${student_codes.join(', ')}`);
 
         let existingStudents: { student_code: string }[] = [];
         try {
@@ -45,7 +43,6 @@ export class StudentPhotosService {
 
         // Đảm bảo đưa vào Set cũng phải là In Hoa
         const existingCodeSet = new Set(existingStudents.map((s) => s.student_code.toUpperCase()));
-        this.logger.debug(`[3] DB trả về các sinh viên tồn tại: ${[...existingCodeSet].join(', ')}`);
 
         const finalResults: ConfirmUploadResult[] = [];
         const rowsToInsert: { student_code: string; image_url: string; fileName: string }[] = [];
@@ -60,7 +57,6 @@ export class StudentPhotosService {
 
             // TRƯỜNG HỢP 1: Sinh viên chưa tồn tại trong Database
             if (!existingCodeSet.has(currentCode)) {
-                this.logger.warn(`[TỪ CHỐI] SV ${currentCode} không có trong DB. Đang xóa rác trên S3...`);
                 await this.s3Service.deleteUnconfirmedFile(result.fileName);
 
                 finalResults.push({
@@ -86,12 +82,21 @@ export class StudentPhotosService {
 
         // TRƯỜNG HỢP 3: Insert vào DB bằng Transaction
         if (rowsToInsert.length > 0) {
-            this.logger.debug(`[4] Chuẩn bị insert ${rowsToInsert.length} record vào bảng studentPhoto`);
             const codesToInsert = rowsToInsert.map((r) => r.student_code);
             const dbPayload = rowsToInsert.map(r => ({
                 student_code: r.student_code, 
                 image_url: r.image_url 
             }));
+
+            let oldPhotos: { image_url: string }[] = [];
+            try {
+                oldPhotos = await this.prisma.studentPhoto.findMany({
+                    where: { student_code: { in: codesToInsert } },
+                    select: { image_url: true }
+                });
+            } catch (e) {
+                this.logger.error("Lỗi khi truy xuất ảnh cũ", e);
+            }
 
             try {
                 await this.prisma.$transaction([
@@ -102,7 +107,17 @@ export class StudentPhotosService {
                         data: dbPayload
                     }),
                 ]);
-                this.logger.log(`[5] Transaction thành công!`);
+
+                // Xóa ảnh cũ trên S3 nếu khác url mới
+                const newUrls = new Set(dbPayload.map(p => p.image_url));
+                for (const old of oldPhotos) {
+                    if (!newUrls.has(old.image_url)) {
+                        const oldFileName = old.image_url.split('/').pop();
+                        if (oldFileName) {
+                            await this.s3Service.deleteUnconfirmedFile(oldFileName);
+                        }
+                    }
+                }
             } catch (error) {
                 this.logger.error("Lỗi khi ghi vào studentPhoto. Ràng buộc khoá ngoại (FK) thất bại?", error);
                 
@@ -117,8 +132,6 @@ export class StudentPhotosService {
                 }
             }
         }
-
-        this.logger.debug(`[6] Kết quả cuối cùng trả về Controller: ${JSON.stringify(finalResults)}`);
         return finalResults;
     }
 }

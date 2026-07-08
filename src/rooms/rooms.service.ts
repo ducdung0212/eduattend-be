@@ -3,6 +3,12 @@ import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as ExcelJS from 'exceljs';
+import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const ROOM_SELECT = {
   room_code: true,
@@ -104,6 +110,56 @@ export class RoomsService {
     return{
       message:"Đã xóa thành công"
     }
+  }
+
+  /**
+   * Trả về tất cả phòng kèm danh sách ca thi đã chiếm trong ngày `date`.
+   * Frontend dùng để hiển thị trạng thái trống/bận cho room card grid.
+   */
+  async findAllWithAvailability(date: string) {
+    const dayStart = dayjs.tz(date, 'Asia/Ho_Chi_Minh').startOf('day').toDate();
+    const dayEnd = dayjs.tz(date, 'Asia/Ho_Chi_Minh').endOf('day').toDate();
+
+    const [allRooms, schedulesInDay] = await Promise.all([
+      this.prisma.room.findMany({
+        select: ROOM_SELECT,
+        orderBy: { room_code: 'asc' },
+      }),
+      this.prisma.examSchedule.findMany({
+        where: {
+          start_time: { gte: dayStart, lte: dayEnd },
+        },
+        select: {
+          room_code: true,
+          start_time: true,
+          duration: true,
+          subject: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    // Nhóm ca thi theo room_code
+    const slotsByRoom = new Map<string, { start_time: string; end_time: string; subject_name: string }[]>();
+    for (const s of schedulesInDay) {
+      const start = dayjs(s.start_time);
+      const end = start.add(s.duration, 'minute');
+      const slot = {
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        subject_name: s.subject.name,
+      };
+      if (!slotsByRoom.has(s.room_code)) {
+        slotsByRoom.set(s.room_code, []);
+      }
+      slotsByRoom.get(s.room_code)!.push(slot);
+    }
+
+    return {
+      data: allRooms.map((room) => ({
+        ...room,
+        occupied_slots: slotsByRoom.get(room.room_code) ?? [],
+      })),
+    };
   }
   async importFromExcel(fileBuffer:Buffer){
     const workbook=new ExcelJS.Workbook();

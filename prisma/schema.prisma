@@ -92,6 +92,18 @@ model Lecturer {
   @@map("lecturers")
 }
 
+model ExamPeriod {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String         @db.VarChar(200)
+  start_date     DateTime       @db.Date
+  end_date       DateTime       @db.Date
+  created_at     DateTime       @default(now()) @db.Timestamp(0)
+  updated_at     DateTime       @updatedAt @db.Timestamp(0)
+  exam_schedules ExamSchedule[]
+
+  @@map("exam_periods")
+}
+
 model ExamSchedule {
   id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   subject_code       String             @db.VarChar(20)
@@ -100,16 +112,19 @@ model ExamSchedule {
   duration           Int
   room_code          String             @db.VarChar(20)
   note               String?
+  exam_period_id     String?            @db.Uuid
   created_at         DateTime           @default(now()) @db.Timestamp(0)
   updated_at         DateTime           @updatedAt @db.Timestamp(0)
   attendance_records AttendanceRecord[]
   subject            Subject            @relation(fields: [subject_code], references: [subject_code], onDelete: Restrict)
   room               Room               @relation(fields: [room_code], references: [room_code], onDelete: Restrict)
+  exam_period        ExamPeriod?        @relation(fields: [exam_period_id], references: [id], onDelete: SetNull)
   exam_supervisors        ExamSupervisor[]
 
   @@unique([subject_code, start_time, room_code])
   @@index([room_code])
   @@index([start_time])
+  @@index([exam_period_id])
   @@map("exam_schedules")
 }
 

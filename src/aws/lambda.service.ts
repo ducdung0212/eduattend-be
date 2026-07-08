@@ -14,7 +14,6 @@ import {
 export interface StudentInfo {
   rekognitionId: string;
   student_code: string;
-  [key: string]: any; // các field khác tuỳ schema DynamoDB (tên, lớp, v.v.)
 }
 
 // Khớp với response body Lambda trả về khi success:
@@ -25,6 +24,7 @@ export interface VerifyFaceResult {
     student: StudentInfo; // toàn bộ record từ DynamoDB
     confidence: number;   // Similarity từ Rekognition (0-100)
     face_id: string;      // FaceId trong Rekognition Collection
+    rekognition_result: string
   };
   message: string;
 }
@@ -52,11 +52,10 @@ export class LambdaService {
   // ─── LUỒNG 2: Xác thực khuôn mặt điểm danh ──────────────────────────
   async verifyFace(
     imageBase64: string,
-    // examScheduleId: string,
   ): Promise<VerifyFaceResult> {
     // Payload gửi lên Lambda: { image, examScheduleId }
     // Lambda đọc từ body.image (base64) và body.examScheduleId
-    const payload = { image: imageBase64 /*examScheduleId*/ };
+    const payload = { image: imageBase64  };
 
     // this.logger.log(
     //   `Calling Lambda: ${this.functionName} | schedule: ${examScheduleId}`,
@@ -134,6 +133,7 @@ export class LambdaService {
           student: body.data!.student,
           confidence: body.data!.confidence,
           face_id: body.data!.face_id,
+          rekognition_result: body.data!.rekognition_result
         },
         message: body.message,
       };

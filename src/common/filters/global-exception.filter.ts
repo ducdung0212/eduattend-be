@@ -41,6 +41,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
        }
     } else {
        console.error(' [Unknown Error]:', exception);
+       try {
+           require('fs').appendFileSync('error.log', `\n--- [Unknown Error] ---\n${exception instanceof Error ? exception.stack : JSON.stringify(exception)}\n`);
+       } catch (e) {}
     }
 
     // Đảm bảo message trả về luôn là một chuỗi (String) dễ đọc cho Frontend

@@ -28,6 +28,14 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
       room_code: true,
       name: true
     }
+  },
+  exam_period: {
+    select: {
+      id: true,
+      name: true,
+      start_date: true,
+      end_date: true,
+    }
   }
 };
 
@@ -80,6 +88,17 @@ export class ExamSchedulesService {
     if (!existingRoom) {
       throw new NotFoundException("Không tồn tại phòng")
     }
+
+    // Validate exam_period_id nếu có
+    if (createExamScheduleDto.exam_period_id) {
+      const period = await this.prisma.examPeriod.findUnique({
+        where: { id: createExamScheduleDto.exam_period_id },
+      });
+      if (!period) {
+        throw new NotFoundException('Không tìm thấy đợt thi');
+      }
+    }
+
     await this.checkRoomAvailability(
       createExamScheduleDto.room_code,
       createExamScheduleDto.start_time,
@@ -101,9 +120,10 @@ export class ExamSchedulesService {
     page?: number,
     limit?: number,
     student_code?:string,
-    lecturer_code?:string
+    lecturer_code?:string,
+    exam_period_id?:string,
   } = {}) {
-    const { search, start_time, student_code,lecturer_code } = query;
+    const { search, start_time, student_code, lecturer_code, exam_period_id } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
 
@@ -141,18 +161,30 @@ export class ExamSchedulesService {
             lecturer_code: lecturer_code
           }
         }
-      } : {})
+      } : {}),
+
+      // Điều kiện lọc theo đợt thi
+      ...(exam_period_id ? { exam_period_id } : {}),
     };
 
     const [rawExamSchedules, total] = await Promise.all([
       this.prisma.examSchedule.findMany({
         where,
         select: {
-          ...EXAM_SCHEDULE_SELECT, 
+          ...EXAM_SCHEDULE_SELECT,
           _count: {
             select: {
-              attendance_records: true, 
-              exam_supervisors: true,
+              attendance_records: true,
+            }
+          },
+          exam_supervisors: {
+            select: {
+              lecturer: {
+                select: {
+                  last_name: true,
+                  first_name: true,
+                }
+              }
             }
           }
         },
@@ -166,11 +198,11 @@ export class ExamSchedulesService {
     ]);
 
     const data = rawExamSchedules.map(schedule => {
-      const { _count, ...scheduleData } = schedule; 
+      const { _count, exam_supervisors, ...scheduleData } = schedule;
       return {
         ...scheduleData,
         attendance_count: _count?.attendance_records || 0,
-        supervisor_count: _count?.exam_supervisors || 0,
+        supervisors: exam_supervisors.map(sv => `${sv.lecturer.last_name} ${sv.lecturer.first_name}`),
       };
     });
 
@@ -186,6 +218,107 @@ export class ExamSchedulesService {
       }
     };
 }
+  async findOngoing(query: {
+    search?: string;
+    exam_period_id?: string;
+    page?: number;
+    limit?: number;
+    lecturer_code?:string;
+  } = {}) {
+    const { search, exam_period_id,lecturer_code } = query;
+    const page = Number(query.page) || 1;
+    const limit = Number(query.limit) || 100;
+
+    const take = Math.min(limit, 100);
+    const skip = (page - 1) * take;
+
+    const now = dayjs().tz('Asia/Ho_Chi_Minh');
+    const startOfDay = now.startOf('day').toDate();
+    const endOfDay = now.endOf('day').toDate();
+
+    const where: Prisma.ExamScheduleWhereInput = {
+      start_time: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+      ...(search ? {
+        OR: [
+          { subject_code: { contains: search, mode: 'insensitive' } },
+          { subject: { name: { contains: search, mode: 'insensitive' } } },
+          { room_code: { contains: search, mode: 'insensitive' } },
+          { room: { name: { contains: search, mode: 'insensitive' } } },
+        ]
+      } : {}),
+      
+      ...(exam_period_id ? { exam_period_id } : {}),
+
+      ...(lecturer_code ? {
+        exam_supervisors: {
+          some: {
+            lecturer_code: lecturer_code
+          }
+        }
+      } : {}),
+    };
+
+    const rawSchedules = await this.prisma.examSchedule.findMany({
+      where,
+      select: {
+        ...EXAM_SCHEDULE_SELECT,
+        _count: {
+          select: {
+            attendance_records: true,
+          }
+        },
+        exam_supervisors: {
+          select: {
+            lecturer: {
+              select: {
+                last_name: true,
+                first_name: true,
+              }
+            }
+          }
+        }
+      },
+      orderBy: {
+        start_time: 'asc',
+      }
+    });
+
+    // Filter in-memory: chỉ giữ các ca thi đang diễn ra (now trong khoảng [start_time, start_time + duration])
+    const nowMs = now.valueOf();
+    const ongoingSchedules = rawSchedules.filter(schedule => {
+      const startMs = dayjs(schedule.start_time).valueOf();
+      const endMs = startMs + (schedule.duration ?? 120) * 60000;
+      return nowMs >= startMs && nowMs < endMs;
+    });
+
+    const total = ongoingSchedules.length;
+    const paginatedSchedules = ongoingSchedules.slice(skip, skip + take);
+
+    const data = paginatedSchedules.map(schedule => {
+      const { _count, exam_supervisors, ...scheduleData } = schedule;
+      return {
+        ...scheduleData,
+        attendance_count: _count?.attendance_records || 0,
+        supervisors: exam_supervisors.map(sv => `${sv.lecturer.last_name} ${sv.lecturer.first_name}`),
+      };
+    });
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit: take,
+        totalPages: Math.ceil(total / take),
+        hasNextPage: page < Math.ceil(total / take),
+        hasPrevPage: page > 1,
+      }
+    };
+  }
+
   async findOne(id: string) {
     const examSchedule = await this.prisma.examSchedule.findUnique({
       where: { id },
@@ -426,4 +559,3 @@ export class ExamSchedulesService {
     };
   }
 }
-

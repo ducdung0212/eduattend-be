@@ -26,6 +26,12 @@ export class RoomsController {
   ) {
     return this.roomsService.findAll({search,page:page?+page:undefined,limit:limit?+limit:undefined});
   }
+
+  @Get('availability')
+  findAllWithAvailability(@Query('date') date: string) {
+    return this.roomsService.findAllWithAvailability(date);
+  }
+
   @Post('import')
       @UseInterceptors(FileInterceptor('file'))
       async importClasses(

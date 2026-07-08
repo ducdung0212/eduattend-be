@@ -1,4 +1,4 @@
-import { IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID } from "class-validator";
 
 export class CreateExamScheduleDto {
     @IsNotEmpty({message:"Mã môn học không được để trống"})
@@ -24,4 +24,8 @@ export class CreateExamScheduleDto {
     @IsNotEmpty({message:"Nhóm không được để trống"})
     @IsNumber()
     group!: number;
+
+    @IsNotEmpty({message:"Mã kỳ thi không được để trống"})
+    @IsUUID('4', { message: 'Mã kỳ thi không hợp lệ' })
+    exam_period_id!: string;
 }

@@ -34,6 +34,11 @@ const STUDENT_SELECT: Prisma.StudentSelect = {
         }
       }
     }
+  },
+  photos: {
+    select: {
+      image_url: true
+    }
   }
 };
 
@@ -109,7 +114,7 @@ export class StudentsService {
       return { messgae: 'Tạo sinh viên và tài khoản thành công', data: student };
     }
 
-    const student = await this.prisma.student.create({
+    await this.prisma.student.create({
       data: studentData,
       select: STUDENT_SELECT,
     })
@@ -216,6 +221,17 @@ export class StudentsService {
     return {
       message: "Xóa sinh viên thành công"
     };
+  }
+
+  async getDetail(student_code: string) {
+    const student = await this.prisma.student.findUnique({
+      where: { student_code },
+      select: STUDENT_SELECT
+    });
+    if (!student) {
+      throw new NotFoundException(`Không tìm thấy sinh viên có mã ${student_code}`);
+    }
+    return student;
   }
   async importFromExcel(fileBuffer: Buffer, create_account: boolean = false) {
     const workbook = new ExcelJS.Workbook();

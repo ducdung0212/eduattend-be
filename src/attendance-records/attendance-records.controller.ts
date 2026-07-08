@@ -8,9 +8,10 @@ import { Roles } from 'src/common/decorators/roles.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CheckInDto } from './dto/check-in.dto';
 import { CreateAttendanceRecordBulkDto } from './dto/create-attendance-record-bulk.dto';
+import { ExamScheduleOwnerGuard } from 'src/common/guards/exam-schedule-owner.guard';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('admin', 'lecturer')
+@Roles('admin')
 @Controller('attendance-records')
 export class AttendanceRecordsController {
   constructor(private readonly attendanceRecordsService: AttendanceRecordsService) { }
@@ -21,6 +22,8 @@ export class AttendanceRecordsController {
   }
 
   @Get()
+  @Roles('admin','lecturer')
+  @UseGuards(ExamScheduleOwnerGuard)
   findAll(
     @Query('search') search?: string,
     @Query('student_code') student_code?: string,
@@ -41,11 +44,12 @@ export class AttendanceRecordsController {
     bulkCreate(@Body() dto: CreateAttendanceRecordBulkDto) {
       return this.attendanceRecordsService.bulkCreate(dto);
     }
-    
+  @Roles('admin','lecturer')
+  @UseGuards(ExamScheduleOwnerGuard)
   @Post('check-in')
   @UseInterceptors(FileInterceptor('image'))
   async checkIn(
-    //@Body() body: CheckInDto,
+    @Body() checkInDto: CheckInDto,
     @UploadedFile(
       new ParseFilePipe({
         validators: [
@@ -61,6 +65,7 @@ export class AttendanceRecordsController {
   ) {
     return this.attendanceRecordsService.checkIn(
       file.buffer,
+      checkInDto.exam_schedule_id
     );
   }
 

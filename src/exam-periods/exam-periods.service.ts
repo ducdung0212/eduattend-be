@@ -1,0 +1,147 @@
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { CreateExamPeriodDto } from './dto/create-exam-period.dto';
+import { UpdateExamPeriodDto } from './dto/update-exam-period.dto';
+import { PrismaService } from 'src/prisma/prisma.service';
+import dayjs from 'dayjs';
+
+const EXAM_PERIOD_SELECT = {
+    id: true,
+    name: true,
+    start_date: true,
+    end_date: true,
+} as const;
+
+@Injectable()
+export class ExamPeriodsService {
+    constructor(private prisma: PrismaService) {}
+
+    async create(dto: CreateExamPeriodDto) {
+        const start = dayjs(dto.start_date);
+        const end = dayjs(dto.end_date);
+
+        if (end.isBefore(start)) {
+            throw new BadRequestException('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu');
+        }
+
+        // Kiểm tra trùng tên
+        const existing = await this.prisma.examPeriod.findFirst({
+            where: { name: dto.name },
+        });
+        if (existing) {
+            throw new ConflictException('Tên đợt thi đã tồn tại');
+        }
+
+        const examPeriod = await this.prisma.examPeriod.create({
+            data: {
+                name: dto.name,
+                start_date: start.toDate(),
+                end_date: end.toDate(),
+            },
+            select: EXAM_PERIOD_SELECT,
+        });
+
+        return {
+            message: 'Thêm đợt thi thành công',
+            data: examPeriod,
+        };
+    }
+
+    async findAll(query: { search?: string; page?: number; limit?: number } = {}) {
+        const { search } = query;
+        const page = Number(query.page) || 1;
+        const limit = Number(query.limit) || 100;
+
+        const take = Math.min(limit, 100);
+        const skip = (page - 1) * take;
+
+        const where = {
+            ...(search
+                ? {
+                      name: { contains: search, mode: 'insensitive' as const },
+                  }
+                : {}),
+        };
+
+        const [data, total] = await Promise.all([
+            this.prisma.examPeriod.findMany({
+                where,
+                select: {
+                    ...EXAM_PERIOD_SELECT,
+                    _count: { select: { exam_schedules: true } },
+                },
+                orderBy: { start_date: 'desc' },
+                take,
+                skip,
+            }),
+            this.prisma.examPeriod.count({ where }),
+        ]);
+
+        return {
+            data: data.map(({ _count, ...rest }) => ({
+                ...rest,
+                exam_schedule_count: _count.exam_schedules,
+            })),
+            meta: {
+                total,
+                page,
+                limit: take,
+                totalPages: Math.ceil(total / take),
+                hasNextPage: page < Math.ceil(total / take),
+                hasPrevPage: page > 1,
+            },
+        };
+    }
+
+    async findOne(id: string) {
+        const examPeriod = await this.prisma.examPeriod.findUnique({
+            where: { id },
+            select: EXAM_PERIOD_SELECT,
+        });
+        if (!examPeriod) {
+            throw new NotFoundException('Không tìm thấy đợt thi');
+        }
+        return examPeriod;
+    }
+
+    async update(id: string, dto: UpdateExamPeriodDto) {
+        await this.findOne(id);
+
+        if (dto.start_date && dto.end_date) {
+            const start = dayjs(dto.start_date);
+            const end = dayjs(dto.end_date);
+            if (end.isBefore(start)) {
+                throw new BadRequestException('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu');
+            }
+        }
+
+        const data: Record<string, any> = {};
+        if (dto.name !== undefined) data.name = dto.name;
+        if (dto.start_date !== undefined) data.start_date = dayjs(dto.start_date).toDate();
+        if (dto.end_date !== undefined) data.end_date = dayjs(dto.end_date).toDate();
+
+        const examPeriod = await this.prisma.examPeriod.update({
+            where: { id },
+            data,
+            select: EXAM_PERIOD_SELECT,
+        });
+
+        return {
+            message: 'Cập nhật đợt thi thành công',
+            data: examPeriod,
+        };
+    }
+
+    async remove(id: string) {
+        await this.findOne(id);
+
+        // Gỡ liên kết các ca thi thuộc đợt này (set null) trước khi xóa
+        await this.prisma.examSchedule.updateMany({
+            where: { exam_period_id: id },
+            data: { exam_period_id: null },
+        });
+
+        await this.prisma.examPeriod.delete({ where: { id } });
+
+        return { message: 'Đã xóa đợt thi thành công' };
+    }
+}

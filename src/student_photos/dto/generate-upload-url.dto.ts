@@ -13,7 +13,7 @@ export class GenerateUploadUrlItemDto {
 export class GenerateUploadUrlDto {
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(120) // giống giới hạn trong Laravel: max:120
+  @ArrayMaxSize(120) 
   @ValidateNested({ each: true })
   @Type(() => GenerateUploadUrlItemDto)
   files!: GenerateUploadUrlItemDto[];
