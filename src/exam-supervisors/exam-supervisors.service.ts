@@ -4,6 +4,7 @@ import { CreateExamSupervisorDto } from './dto/create-exam-supervisor.dto';
 import { UpdateExamSupervisorDto } from './dto/update-exam-supervisor.dto';
 import { Prisma } from '@prisma/client';
 import { CreateExamSupervisorBulkDto } from './dto/create-exam-supervisor-bulk.dto';
+import dayjs from 'dayjs';
 
 
 const EXAM_SUPERVISOR_SELECT: Prisma.ExamSupervisorSelect = {
@@ -37,6 +38,57 @@ const EXAM_SUPERVISOR_SELECT: Prisma.ExamSupervisorSelect = {
 export class ExamSupervisorsService {
   constructor(private prisma: PrismaService) { }
 
+  /**
+   * Kiểm tra giám thị có bị trùng giờ với ca thi khác không.
+   * Nếu trùng → throw ConflictException.
+   */
+  private async checkSupervisorTimeConflict(
+    lecturer_code: string,
+    targetScheduleId: string,
+  ) {
+    // Lấy thông tin ca thi mục tiêu
+    const targetSchedule = await this.prisma.examSchedule.findUnique({
+      where: { id: targetScheduleId },
+      select: { start_time: true, duration: true },
+    });
+    if (!targetSchedule) return;
+
+    const newStart = dayjs(targetSchedule.start_time);
+    const newEnd = newStart.add(targetSchedule.duration, 'minute');
+
+    // Lấy tất cả ca thi mà giảng viên này đang coi (trừ ca thi mục tiêu)
+    const otherSupervisedSchedules = await this.prisma.examSupervisor.findMany({
+      where: {
+        lecturer_code,
+        exam_schedule_id: { not: targetScheduleId },
+      },
+      select: {
+        exam_schedule: {
+          select: {
+            start_time: true,
+            duration: true,
+            subject: { select: { name: true } },
+            room: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    for (const sv of otherSupervisedSchedules) {
+      const existingStart = dayjs(sv.exam_schedule.start_time);
+      const existingEnd = existingStart.add(sv.exam_schedule.duration, 'minute');
+
+      if (newStart.isBefore(existingEnd) && newEnd.isAfter(existingStart)) {
+        const subjectName = sv.exam_schedule.subject?.name ?? '';
+        const roomName = sv.exam_schedule.room?.name ?? '';
+        const timeStr = existingStart.format('HH:mm DD/MM/YYYY');
+        throw new ConflictException(
+          `Giám thị đã được phân công coi thi "${subjectName}" tại ${roomName} lúc ${timeStr}, thời gian bị trùng`,
+        );
+      }
+    }
+  }
+
   async create(createExamSupervisorDto: CreateExamSupervisorDto) {
     const existingRecord = await this.prisma.examSupervisor.findFirst({
       where: {
@@ -58,6 +110,12 @@ export class ExamSupervisorsService {
       where: { id: createExamSupervisorDto.exam_schedule_id }
     });
     if (!schedule) throw new NotFoundException("Không tìm thấy ca thi");
+
+    // Kiểm tra trùng giờ với các ca thi khác
+    await this.checkSupervisorTimeConflict(
+      createExamSupervisorDto.lecturer_code,
+      createExamSupervisorDto.exam_schedule_id,
+    );
 
     const record = await this.prisma.examSupervisor.create({
       data: createExamSupervisorDto,
@@ -197,12 +255,46 @@ export class ExamSupervisorsService {
     });
     const alreadyAssigned = new Set(existingSupervisors.map((s) => s.lecturer_code));
 
+    // 5. Kiểm tra trùng giờ: Lấy thông tin ca thi mục tiêu + tất cả ca thi đang coi của các giảng viên
+    const targetSchedule = await this.prisma.examSchedule.findUnique({
+      where: { id: exam_schedule_id },
+      select: { start_time: true, duration: true },
+    });
+    const newStart = dayjs(targetSchedule!.start_time);
+    const newEnd = newStart.add(targetSchedule!.duration, 'minute');
+
+    // Lấy tất cả phân công coi thi khác của các giảng viên hợp lệ (trừ ca thi hiện tại)
+    const validLecturerCodes = Array.from(existingLecturerCodes).filter(c => !alreadyAssigned.has(c));
+    const otherAssignments = validLecturerCodes.length > 0
+      ? await this.prisma.examSupervisor.findMany({
+          where: {
+            lecturer_code: { in: validLecturerCodes },
+            exam_schedule_id: { not: exam_schedule_id },
+          },
+          select: {
+            lecturer_code: true,
+            exam_schedule: {
+              select: { start_time: true, duration: true, subject: { select: { name: true } }, room: { select: { name: true } } },
+            },
+          },
+        })
+      : [];
+
+    // Nhóm theo lecturer_code để lookup nhanh
+    const assignmentsByLecturer = new Map<string, typeof otherAssignments>();
+    for (const a of otherAssignments) {
+      if (!assignmentsByLecturer.has(a.lecturer_code)) {
+        assignmentsByLecturer.set(a.lecturer_code, []);
+      }
+      assignmentsByLecturer.get(a.lecturer_code)!.push(a);
+    }
+
     const success: { lecturer_code: string; id: string }[] = [];
     const failed: { lecturer_code: string; reason: string }[] = [];
 
     const toCreate: string[] = [];
 
-    // 5. Phân loại kết quả
+    // 6. Phân loại kết quả
     for (const code of uniqueCodes) {
       if (!existingLecturerCodes.has(code)) {
         failed.push({ lecturer_code: code, reason: 'Không tìm thấy giảng viên' });
@@ -212,6 +304,24 @@ export class ExamSupervisorsService {
         failed.push({ lecturer_code: code, reason: 'Đã được phân công coi thi ca này' });
         continue;
       }
+
+      // Kiểm tra trùng giờ
+      const lecturerAssignments = assignmentsByLecturer.get(code) ?? [];
+      let hasConflict = false;
+      for (const a of lecturerAssignments) {
+        const existingStart = dayjs(a.exam_schedule.start_time);
+        const existingEnd = existingStart.add(a.exam_schedule.duration, 'minute');
+        if (newStart.isBefore(existingEnd) && newEnd.isAfter(existingStart)) {
+          const subjectName = a.exam_schedule.subject?.name ?? '';
+          const roomName = a.exam_schedule.room?.name ?? '';
+          const timeStr = existingStart.format('HH:mm DD/MM/YYYY');
+          failed.push({ lecturer_code: code, reason: `Trùng giờ với "${subjectName}" tại ${roomName} lúc ${timeStr}` });
+          hasConflict = true;
+          break;
+        }
+      }
+      if (hasConflict) continue;
+
       toCreate.push(code);
     }
 

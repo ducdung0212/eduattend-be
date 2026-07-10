@@ -3,6 +3,11 @@ import { CreateExamPeriodDto } from './dto/create-exam-period.dto';
 import { UpdateExamPeriodDto } from './dto/update-exam-period.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 const EXAM_PERIOD_SELECT = {
     id: true,
@@ -104,20 +109,44 @@ export class ExamPeriodsService {
     }
 
     async update(id: string, dto: UpdateExamPeriodDto) {
-        await this.findOne(id);
+        const currentPeriod = await this.findOne(id);
 
-        if (dto.start_date && dto.end_date) {
-            const start = dayjs(dto.start_date);
-            const end = dayjs(dto.end_date);
-            if (end.isBefore(start)) {
-                throw new BadRequestException('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu');
+        let targetStart = dayjs(currentPeriod.start_date).tz('Asia/Ho_Chi_Minh');
+        let targetEnd = dayjs(currentPeriod.end_date).tz('Asia/Ho_Chi_Minh');
+
+        if (dto.start_date) targetStart = dayjs.tz(dto.start_date, 'Asia/Ho_Chi_Minh');
+        if (dto.end_date) targetEnd = dayjs.tz(dto.end_date, 'Asia/Ho_Chi_Minh');
+
+        if (targetEnd.startOf('day').isBefore(targetStart.startOf('day'))) {
+            throw new BadRequestException('Ngày kết thúc phải sau hoặc bằng ngày bắt đầu');
+        }
+
+        // Kiểm tra xem có ca thi nào rơi ra ngoài khoảng thời gian mới không
+        if (dto.start_date || dto.end_date) {
+            const startOfDay = targetStart.startOf('day').toDate();
+            const endOfDay = targetEnd.endOf('day').toDate();
+
+            const outsideSchedules = await this.prisma.examSchedule.count({
+                where: {
+                    exam_period_id: id,
+                    OR: [
+                        { start_time: { lt: startOfDay } },
+                        { start_time: { gt: endOfDay } }
+                    ]
+                }
+            });
+
+            if (outsideSchedules > 0) {
+                throw new BadRequestException(
+                    `Lỗi: Có ${outsideSchedules} ca thi thuộc đợt này đang có ngày thi nằm ngoài khoảng từ ${targetStart.format('DD/MM/YYYY')} đến ${targetEnd.format('DD/MM/YYYY')}. Vui lòng dời ngày các ca thi đó trước khi sửa đợt thi.`
+                );
             }
         }
 
         const data: Record<string, any> = {};
         if (dto.name !== undefined) data.name = dto.name;
-        if (dto.start_date !== undefined) data.start_date = dayjs(dto.start_date).toDate();
-        if (dto.end_date !== undefined) data.end_date = dayjs(dto.end_date).toDate();
+        if (dto.start_date !== undefined) data.start_date = dayjs.tz(dto.start_date, 'Asia/Ho_Chi_Minh').startOf('day').toDate();
+        if (dto.end_date !== undefined) data.end_date = dayjs.tz(dto.end_date, 'Asia/Ho_Chi_Minh').startOf('day').toDate();
 
         const examPeriod = await this.prisma.examPeriod.update({
             where: { id },
@@ -134,11 +163,14 @@ export class ExamPeriodsService {
     async remove(id: string) {
         await this.findOne(id);
 
-        // Gỡ liên kết các ca thi thuộc đợt này (set null) trước khi xóa
-        await this.prisma.examSchedule.updateMany({
-            where: { exam_period_id: id },
-            data: { exam_period_id: null },
+        // Chặn xóa nếu còn ca thi
+        const schedulesCount = await this.prisma.examSchedule.count({
+            where: { exam_period_id: id }
         });
+
+        if (schedulesCount > 0) {
+            throw new ConflictException(`Không thể xóa đợt thi này vì đang có ${schedulesCount} ca thi. Vui lòng gỡ hoặc xóa các ca thi bên trong trước.`);
+        }
 
         await this.prisma.examPeriod.delete({ where: { id } });
 

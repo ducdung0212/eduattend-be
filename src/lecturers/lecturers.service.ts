@@ -252,8 +252,8 @@ export class LecturersService {
     const last_name     = getCellValue(row.getCell(2)).trim();
     const first_name    = getCellValue(row.getCell(3)).trim();
     const email         = getCellValue(row.getCell(4)).trim().toLowerCase();
-    const phone         = getCellValue(row.getCell(5)).trim() || null;
-    const faculty_code  = getCellValue(row.getCell(6)).trim();
+    const faculty_code  = getCellValue(row.getCell(5)).trim();
+    const phone         = getCellValue(row.getCell(6)).trim() || null;
 
     if (!lecturer_code || !last_name || !first_name || !email || !faculty_code) {
       errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã GV, họ, tên, email, mã khoa)' });

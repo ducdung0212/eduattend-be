@@ -59,8 +59,9 @@ export class ExamSchedulesController {
 
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
-  async importLecturers(
+  async importExamSchedules(
     @UploadedFile() file: Express.Multer.File,
+    @Body('exam_period_id') exam_period_id: string,
   ) {
     // 1. Validate xem người dùng có gửi file lên không
     if (!file) {
@@ -76,7 +77,11 @@ export class ExamSchedulesController {
       throw new BadRequestException('Chỉ chấp nhận định dạng file Excel (.xlsx, .xls)');
     }
 
-    return this.examSchedulesService.importFromExcel(file.buffer);
+    if (!exam_period_id) {
+      throw new BadRequestException('Vui lòng chọn đợt thi');
+    }
+
+    return this.examSchedulesService.importFromExcel(file.buffer, exam_period_id);
   }
 
   @Get(':id')

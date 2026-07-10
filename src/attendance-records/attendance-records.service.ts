@@ -292,8 +292,11 @@ export class AttendanceRecordsService {
     const startOfDayVN = dayjs(schedule.start_time).tz("Asia/Ho_Chi_Minh").startOf('day').toDate();
     const endOfDayVN = dayjs(schedule.start_time).tz("Asia/Ho_Chi_Minh").endOf('day').toDate();
 
-    // 5. Kiểm tra xem sinh viên nào ĐÃ CÓ ca thi trong ngày hôm đó (bao gồm cả ca hiện tại)
-    const busyStudents = await this.prisma.attendanceRecord.findMany({
+    // 5. Kiểm tra xem sinh viên nào ĐÃ CÓ ca thi TRÙNG GIỜ trong ngày hôm đó
+    const currentStartTime = dayjs(schedule.start_time);
+    const currentEndTime = currentStartTime.add(schedule.duration, 'minute');
+
+    const sameDayRecords = await this.prisma.attendanceRecord.findMany({
       where: {
         student_code: { in: Array.from(validStudentCodes) },
         exam_schedule: {
@@ -303,9 +306,21 @@ export class AttendanceRecordsService {
           }
         }
       },
-      select: { student_code: true },
+      include: {
+        exam_schedule: true
+      }
     });
-    const busyStudentCodes = new Set(busyStudents.map((s) => s.student_code));
+
+    const busyStudentCodes = new Set<string>();
+    for (const record of sameDayRecords) {
+      const recordStart = dayjs(record.exam_schedule.start_time);
+      const recordEnd = recordStart.add(record.exam_schedule.duration, 'minute');
+
+      // Kiểm tra xem có giao nhau về thời gian không: A_start < B_end && A_end > B_start
+      if (currentStartTime.isBefore(recordEnd) && currentEndTime.isAfter(recordStart)) {
+        busyStudentCodes.add(record.student_code);
+      }
+    }
 
     // 6. Phân loại kết quả
     const success: { student_code: string; id: string }[] = [];

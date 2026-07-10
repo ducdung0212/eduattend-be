@@ -47,7 +47,13 @@ export class StudentsService {
   constructor(private prisma: PrismaService) { }
 
   async create(createStudentDto: CreateStudentDto) {
-    const { create_account, ...studentData } = createStudentDto;
+    const { create_account, ...rest } = createStudentDto;
+    
+    const studentData = {
+      ...rest,
+      email: rest.email || `${rest.student_code.toLowerCase()}@student.stu.edu.vn`
+    };
+
     const [existingStudent, existingClass, existingEmail, existingPhone] = await Promise.all([
       this.prisma.student.findUnique({
         where: { student_code: studentData.student_code }
@@ -269,12 +275,12 @@ export class StudentsService {
       const student_code = getCellValue(row.getCell(1)).trim();
       const last_name = getCellValue(row.getCell(2)).trim();
       const first_name = getCellValue(row.getCell(3)).trim();
-      const email = getCellValue(row.getCell(4)).trim().toLowerCase();
+      const email = `${student_code.toLowerCase()}@student.stu.edu.vn`;
+      const class_code = getCellValue(row.getCell(4)).trim();
       const phone = getCellValue(row.getCell(5)).trim() || null;
-      const class_code = getCellValue(row.getCell(6)).trim();
 
-      if (!student_code || !last_name || !first_name || !email || !class_code) {
-        errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã GV, họ, tên, email, mã khoa)' });
+      if (!student_code || !last_name || !first_name || !class_code) {
+        errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã SV, họ, tên, mã lớp)' });
         continue;
       }
 
@@ -284,7 +290,7 @@ export class StudentsService {
       }
 
       if (seenCodes.has(student_code)) {
-        errorRows.push({ row: i, error: `Mã giảng viên '${student_code}' bị trùng trong file` });
+        errorRows.push({ row: i, error: `Mã sinh viên '${student_code}' bị trùng trong file` });
         continue;
       }
       if (seenEmails.has(email)) {
@@ -452,7 +458,7 @@ export class StudentsService {
                   name: `${row.last_name} ${row.first_name}`,
                   email: row.email,
                   password: hashedPassword!,
-                  role: 'lecturer',
+                  role: 'student',
                 },
               });
               await tx.student.create({

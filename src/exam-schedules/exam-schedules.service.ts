@@ -75,6 +75,33 @@ export class ExamSchedulesService {
       throw new ConflictException("Phòng thi này đã được xếp lịch trùng với thời gian bạn chọn");
     }
   }
+
+  /**
+   * Kiểm tra ràng buộc: trong cùng một đợt thi, mỗi môn chỉ có duy nhất một nhóm.
+   * Nếu đã tồn tại ca thi cùng subject_code + group trong exam_period → throw ConflictException.
+   */
+  private async checkSubjectGroupUnique(
+    exam_period_id: string,
+    subject_code: string,
+    group: number,
+    excludeScheduleId?: string,
+  ) {
+    const existing = await this.prisma.examSchedule.findFirst({
+      where: {
+        exam_period_id,
+        subject_code,
+        group,
+        ...(excludeScheduleId ? { id: { not: excludeScheduleId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `Môn ${subject_code} nhóm ${group} đã tồn tại trong đợt thi này`,
+      );
+    }
+  }
+
   async create(createExamScheduleDto: CreateExamScheduleDto) {
     const existingSubject = await this.prisma.subject.findUnique({
       where: { subject_code: createExamScheduleDto.subject_code }
@@ -98,6 +125,13 @@ export class ExamSchedulesService {
         throw new NotFoundException('Không tìm thấy đợt thi');
       }
     }
+
+    // Kiểm tra trùng môn + nhóm trong đợt thi
+    await this.checkSubjectGroupUnique(
+      createExamScheduleDto.exam_period_id,
+      createExamScheduleDto.subject_code,
+      createExamScheduleDto.group,
+    );
 
     await this.checkRoomAvailability(
       createExamScheduleDto.room_code,
@@ -186,6 +220,20 @@ export class ExamSchedulesService {
                 }
               }
             }
+          },
+          attendance_records: {
+            select: {
+              student: {
+                select: {
+                  class_code: true,
+                  class: {
+                    select: {
+                      name: true,
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         skip,
@@ -198,11 +246,25 @@ export class ExamSchedulesService {
     ]);
 
     const data = rawExamSchedules.map(schedule => {
-      const { _count, exam_supervisors, ...scheduleData } = schedule;
+      const { _count, exam_supervisors, attendance_records, ...scheduleData } = schedule;
+
+      // Group attendance records by class
+      const classMap = new Map<string, { class_code: string; class_name: string; student_count: number }>();
+      for (const record of attendance_records) {
+        const classCode = record.student.class_code;
+        const className = record.student.class.name;
+        if (classMap.has(classCode)) {
+          classMap.get(classCode)!.student_count++;
+        } else {
+          classMap.set(classCode, { class_code: classCode, class_name: className, student_count: 1 });
+        }
+      }
+
       return {
         ...scheduleData,
         attendance_count: _count?.attendance_records || 0,
         supervisors: exam_supervisors.map(sv => `${sv.lecturer.last_name} ${sv.lecturer.first_name}`),
+        class_breakdown: Array.from(classMap.values()).sort((a, b) => a.class_code.localeCompare(b.class_code)),
       };
     });
 
@@ -370,6 +432,20 @@ export class ExamSchedulesService {
       await this.checkRoomAvailability(targetRoomCode, targetStartTime, targetDuration, id);
     }
 
+    // Kiểm tra trùng môn + nhóm trong đợt thi (khi thay đổi subject, group, hoặc exam_period)
+    if (
+      updateExamScheduleDto.subject_code !== undefined ||
+      updateExamScheduleDto.group !== undefined ||
+      updateExamScheduleDto.exam_period_id !== undefined
+    ) {
+      const targetSubjectCode = updateExamScheduleDto.subject_code ?? currentSchedule.subject_code;
+      const targetGroup = updateExamScheduleDto.group ?? currentSchedule.group;
+      const targetExamPeriodId = updateExamScheduleDto.exam_period_id ?? currentSchedule.exam_period_id;
+      if (targetExamPeriodId) {
+        await this.checkSubjectGroupUnique(targetExamPeriodId, targetSubjectCode, targetGroup, id);
+      }
+    }
+
     const examSchedule = await this.prisma.examSchedule.update({
       where: { id },
       data: updateExamScheduleDto,
@@ -392,7 +468,15 @@ export class ExamSchedulesService {
     }
   }
 
-  async importFromExcel(fileBuffer: Buffer) {
+  async importFromExcel(fileBuffer: Buffer, exam_period_id: string) {
+    const period = await this.prisma.examPeriod.findUnique({
+      where: { id: exam_period_id },
+    });
+    if (!period) throw new BadRequestException('Đợt thi không hợp lệ');
+
+    const periodStart = dayjs(period.start_date).tz('Asia/Ho_Chi_Minh').startOf('day').toDate();
+    const periodEnd = dayjs(period.end_date).tz('Asia/Ho_Chi_Minh').endOf('day').toDate();
+
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileBuffer as any);
     const worksheet = workbook.worksheets[0];
@@ -484,6 +568,14 @@ export class ExamSchedulesService {
         continue;
       }
 
+      // Validate date bounds
+      if (combinedDateTime < periodStart || combinedDateTime > periodEnd) {
+        const pStartStr = dayjs(period.start_date).tz('Asia/Ho_Chi_Minh').format('DD/MM/YYYY');
+        const pEndStr = dayjs(period.end_date).tz('Asia/Ho_Chi_Minh').format('DD/MM/YYYY');
+        errorRows.push({ row: i, error: `Ngày thi nằm ngoài thời gian của đợt thi (${pStartStr} - ${pEndStr})` });
+        continue;
+      }
+
       // Validate duration là số dương
       const parsedDuration = Number(duration);
       if (isNaN(parsedDuration) || parsedDuration <= 0) {
@@ -536,10 +628,52 @@ export class ExamSchedulesService {
       return true;
     });
 
+    // ── Pass 3.5: Validate constraints (Local + DB) ───────────────
+    const localSubjectGroups = new Set<string>();
+    const localRooms = new Map<string, { start: dayjs.Dayjs, end: dayjs.Dayjs }[]>();
+    
+    const fullyValidRows = [];
+    
+    for (const row of validRows) {
+      try {
+        // Local check: Subject Group
+        const sgKey = `${row.subject_code}_${row.group}`;
+        if (localSubjectGroups.has(sgKey)) {
+          throw new ConflictException(`Môn ${row.subject_code} nhóm ${row.group} bị trùng lặp bên trong file Excel`);
+        }
+        localSubjectGroups.add(sgKey);
+
+        // DB check: Subject Group
+        await this.checkSubjectGroupUnique(exam_period_id, row.subject_code, row.group);
+
+        // Local check: Room Overlap
+        const newStart = dayjs(row.start_time);
+        const newEnd = newStart.add(row.duration, 'minute');
+        
+        const roomSchedules = localRooms.get(row.room_code) || [];
+        const isLocalOverlap = roomSchedules.some(rs => {
+          return newStart.isBefore(rs.end) && newEnd.isAfter(rs.start);
+        });
+        if (isLocalOverlap) {
+          throw new ConflictException(`Phòng ${row.room_code} bị trùng lịch thi bên trong file Excel`);
+        }
+        roomSchedules.push({ start: newStart, end: newEnd });
+        localRooms.set(row.room_code, roomSchedules);
+
+        // DB check: Room Overlap
+        await this.checkRoomAvailability(row.room_code, row.start_time, row.duration);
+
+        // Valid!
+        fullyValidRows.push({ ...row, exam_period_id });
+      } catch (error: any) {
+        errorRows.push({ row: row.rowNum, error: error.message });
+      }
+    }
+
     // ── Pass 4: createMany 1 query duy nhất ──────────────────────
-    if (validRows.length > 0) {
+    if (fullyValidRows.length > 0) {
       await this.prisma.examSchedule.createMany({
-        data: validRows.map(({ rowNum, ...data }) => data),
+        data: fullyValidRows.map(({ rowNum, ...data }) => data),
       });
     }
 
@@ -548,10 +682,10 @@ export class ExamSchedulesService {
 
     return {
       message: errorRows.length > 0
-        ? `Import hoàn tất với một số lỗi. Thành công: ${validRows.length} dòng. Thất bại: ${errorRows.length} dòng.`
-        : `Import thành công toàn bộ ${validRows.length} dòng!`,
+        ? `Import hoàn tất với một số lỗi. Thành công: ${fullyValidRows.length} dòng. Thất bại: ${errorRows.length} dòng.`
+        : `Import thành công toàn bộ ${fullyValidRows.length} dòng!`,
       data: {
-        successCount: validRows.length,
+        successCount: fullyValidRows.length,
         errorCount: errorRows.length,
         errorMessages,
         rawErrors: errorRows,

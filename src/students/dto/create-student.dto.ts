@@ -19,9 +19,9 @@ export class CreateStudentDto {
     @IsString()
     first_name!: string
 
-    @IsNotEmpty({ message: "Email không được để trống" })
+    @IsOptional()
     @IsEmail({}, { message: "Email không đúng định dạng" })
-    email!: string;
+    email?: string;
     
     @IsOptional()
     @IsPhoneNumber('VN', { message: "Số điện thoại không hợp lệ" })
