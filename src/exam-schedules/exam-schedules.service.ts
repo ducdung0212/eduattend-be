@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateExamScheduleDto } from './dto/create-exam-schedule.dto';
 import { UpdateExamScheduleDto } from './dto/update-exam-schedule.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -632,7 +632,7 @@ export class ExamSchedulesService {
     const localSubjectGroups = new Set<string>();
     const localRooms = new Map<string, { start: dayjs.Dayjs, end: dayjs.Dayjs }[]>();
     
-    const fullyValidRows = [];
+    const fullyValidRows: any[] = [];
     
     for (const row of validRows) {
       try {
