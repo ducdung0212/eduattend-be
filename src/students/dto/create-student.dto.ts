@@ -3,8 +3,7 @@ import { IsEmail, IsNotEmpty, IsOptional, IsPhoneNumber, IsString, Length, Match
 export class CreateStudentDto {
     @IsNotEmpty({ message: "Mã sinh viên không được để trống" })
     @IsString()
-    @Length(10, 11, { message: "Mã sinh viên phải gồm 10 đến 11 kí tự" })
-    @Matches(/^DH/, { message: "Mã sinh viên phải bắt đầu bằng chữ DH" })
+    @Matches(/^(DH|LT)\d{8}$/i, { message: 'Mã sinh viên không đúng định dạng (DH/LT) + 8 số' })
     student_code!: string
 
     @IsNotEmpty({ message: "Vui lòng chọn lớp cho sinh viên" })

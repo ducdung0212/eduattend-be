@@ -284,6 +284,11 @@ export class StudentsService {
         continue;
       }
 
+      if (student_code.length !== 10 || !/^(DH|LT)/i.test(student_code)) {
+        errorRows.push({ row: i, error: `Mã sinh viên '${student_code}' không hợp lệ (phải dài 10 ký tự và bắt đầu bằng DH hoặc LT)` });
+        continue;
+      }
+
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         errorRows.push({ row: i, error: `Email '${email}' không đúng định dạng` });
         continue;
@@ -312,7 +317,7 @@ export class StudentsService {
     if (rawRows.length === 0) {
       return {
         message: 'Không có dữ liệu hợp lệ để import',
-        data: { successCount: 0, errorCount: errorRows.length, errors: errorRows },
+        data: { successCount: 0, errorCount: errorRows.length, rawErrors: errorRows },
       };
     }
 

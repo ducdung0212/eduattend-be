@@ -341,22 +341,25 @@ export class AttendanceRecordsService {
 
     // 7. Thực hiện Transaction để Insert và lấy về ID
     if (toCreate.length > 0) {
-      await this.prisma.$transaction(
-        toCreate.map((student_code) =>
-          this.prisma.attendanceRecord.create({
-            data: { student_code, exam_schedule_id },
-            select: { id: true, student_code: true },
-          }),
-        ),
-      ).then((created) => {
-        created.forEach((c) => success.push({ student_code: c.student_code, id: c.id }));
-      }).catch((err) => {
-        toCreate.forEach((code) => {
-          if (!success.find((s) => s.student_code === code)) {
+      const CHUNK_SIZE = 50;
+      for (let i = 0; i < toCreate.length; i += CHUNK_SIZE) {
+        const chunk = toCreate.slice(i, i + CHUNK_SIZE);
+        try {
+          const created = await this.prisma.$transaction(
+            chunk.map((student_code) =>
+              this.prisma.attendanceRecord.create({
+                data: { student_code, exam_schedule_id },
+                select: { id: true, student_code: true },
+              }),
+            ),
+          );
+          created.forEach((c) => success.push({ student_code: c.student_code, id: c.id }));
+        } catch (err) {
+          chunk.forEach((code) => {
             failed.push({ student_code: code, reason: 'Lỗi khi tạo bản ghi' });
-          }
-        });
-      });
+          });
+        }
+      }
     }
 
     return {

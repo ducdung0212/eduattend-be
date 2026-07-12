@@ -288,7 +288,7 @@ export class LecturersService {
   if (rawRows.length === 0) {
     return {
       message: 'Không có dữ liệu hợp lệ để import',
-      data: { successCount: 0, errorCount: errorRows.length, errors: errorRows },
+      data: { successCount: 0, errorCount: errorRows.length, rawErrors: errorRows },
     };
   }
 

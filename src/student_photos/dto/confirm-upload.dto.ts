@@ -4,7 +4,7 @@ import { Type } from 'class-transformer';
 
 export class ConfirmUploadItemDto {
   @IsString()
-  @Matches(/^DH\d{8}$/i, { message: 'student_code phải đúng định dạng DHxxxxxxxx' })
+  @Matches(/^(DH|LT)\d{8}$/i, { message: 'Mã sinh viên không đúng định dạng (DH/LT) + 8 số' })
   student_code!: string;
 
   @IsString()

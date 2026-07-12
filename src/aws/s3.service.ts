@@ -68,7 +68,7 @@ export class S3Service {
     const student_code = fileName.substring(0, lastDot);
     const extension = fileName.substring(lastDot + 1).toLowerCase();
 
-    const validCode = /^DH\d{8}$/i.test(student_code);
+    const validCode = /^(DH|LT)\d{8}$/i.test(student_code);
     const validExt = ['jpg', 'jpeg', 'png'].includes(extension);
 
     if (!validCode || !validExt) return null;
@@ -89,7 +89,7 @@ export class S3Service {
         return {
           fileName: file.fileName,
           success: false,
-          message: 'Tên tệp phải có định dạng DHxxxxxxxx và định dạng ảnh hợp lệ (jpg/jpeg/png).'
+          message: 'Tên tệp phải có định dạng (DH/LT)xxxxxxxx và định dạng ảnh hợp lệ (jpg/jpeg/png).'
         };
       }
 
