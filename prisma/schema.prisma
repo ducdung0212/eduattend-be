@@ -148,6 +148,7 @@ model AttendanceRecord {
   rekognition_result RekognitionResult?
   confidence         Decimal?           @db.Decimal(5, 2)
   attendance_time    DateTime?          @db.Timestamp(0)
+  note               String?            @db.Text
   created_at         DateTime           @default(now()) @db.Timestamp(0)
   updated_at         DateTime           @updatedAt @db.Timestamp(0)
   id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

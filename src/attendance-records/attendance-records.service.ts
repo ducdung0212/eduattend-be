@@ -20,6 +20,7 @@ const ATTENDANCE_RECORD_SELECT: Prisma.AttendanceRecordSelect = {
   rekognition_result: true,
   confidence: true,
   attendance_time: true,
+  note: true,
   created_at: true,
   updated_at: true,
   student: {
@@ -27,6 +28,11 @@ const ATTENDANCE_RECORD_SELECT: Prisma.AttendanceRecordSelect = {
       student_code: true,
       first_name: true,
       last_name: true,
+      photos: {
+        select: {
+          image_url: true
+        }
+      },
       class: {
         select: {
           class_code: true,
@@ -339,26 +345,50 @@ export class AttendanceRecordsService {
       toCreate.push(code);
     }
 
-    // 7. Thực hiện Transaction để Insert và lấy về ID
+    // 7. Sử dụng createMany (1 câu INSERT duy nhất) thay vì $transaction N create riêng lẻ
     if (toCreate.length > 0) {
-      const CHUNK_SIZE = 50;
-      for (let i = 0; i < toCreate.length; i += CHUNK_SIZE) {
-        const chunk = toCreate.slice(i, i + CHUNK_SIZE);
-        try {
-          const created = await this.prisma.$transaction(
-            chunk.map((student_code) =>
-              this.prisma.attendanceRecord.create({
-                data: { student_code, exam_schedule_id },
-                select: { id: true, student_code: true },
-              }),
-            ),
-          );
-          created.forEach((c) => success.push({ student_code: c.student_code, id: c.id }));
-        } catch (err) {
-          chunk.forEach((code) => {
-            failed.push({ student_code: code, reason: 'Lỗi khi tạo bản ghi' });
+      try {
+        const result = await this.prisma.attendanceRecord.createMany({
+          data: toCreate.map((student_code) => ({ student_code, exam_schedule_id })),
+          skipDuplicates: true,
+        });
+
+        // Query lại để lấy ID các bản ghi vừa tạo
+        const createdRecords = await this.prisma.attendanceRecord.findMany({
+          where: {
+            exam_schedule_id,
+            student_code: { in: toCreate },
+          },
+          select: { id: true, student_code: true },
+        });
+        createdRecords.forEach((c) => success.push({ student_code: c.student_code, id: c.id }));
+
+        // Nếu có bản ghi bị skip (do trùng tại thời điểm insert)
+        if (result.count < toCreate.length) {
+          const insertedCodes = new Set(createdRecords.map((c) => c.student_code));
+          toCreate.forEach((code) => {
+            if (!insertedCodes.has(code)) {
+              failed.push({ student_code: code, reason: 'Sinh viên đã có trong danh sách ca thi' });
+            }
           });
         }
+      } catch (err) {
+        // Fallback: nếu createMany fail thì insert từng cái để biết chính xác lỗi
+        const results = await Promise.allSettled(
+          toCreate.map((student_code) =>
+            this.prisma.attendanceRecord.create({
+              data: { student_code, exam_schedule_id },
+              select: { id: true, student_code: true },
+            }),
+          ),
+        );
+        results.forEach((result, idx) => {
+          if (result.status === 'fulfilled') {
+            success.push({ student_code: result.value.student_code, id: result.value.id });
+          } else {
+            failed.push({ student_code: toCreate[idx], reason: 'Lỗi khi tạo bản ghi' });
+          }
+        });
       }
     }
 

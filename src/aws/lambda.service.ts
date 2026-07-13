@@ -140,9 +140,15 @@ export class LambdaService {
     }
 
     // statusCode 400 / 404 / 500 đều trả success: false kèm message
+    let finalMessage = body?.message ?? 'Xác thực thất bại';
+
+    if (finalMessage.includes('No matching face found')) {
+      finalMessage = 'Không tìm thấy khuôn mặt trùng khớp. Vui lòng thử lại hoặc đăng ký khuôn mặt trước.';
+    }
+
     return {
       success: false,
-      message: body?.message ?? 'Xác thực thất bại',
+      message: finalMessage,
     };
   }
 
