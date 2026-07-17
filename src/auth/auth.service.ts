@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { LambdaService } from '../aws/lambda.service';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private lambdaService: LambdaService,
   ) {}
 
   async login(email: string, pass: string) {
@@ -50,6 +52,57 @@ export class AuthService {
         role: user.role,
         student_code,
         lecturer_code
+      }
+    };
+  }
+
+  async loginFace(imageBase64: string) {
+    const verifyResult = await this.lambdaService.verifyLecturerFace(imageBase64);
+
+    if (!verifyResult.success || !verifyResult.data) {
+      throw new UnauthorizedException(verifyResult.message || 'Xác thực khuôn mặt thất bại');
+    }
+
+    const { student } = verifyResult.data;
+    let user;
+    let final_student_code;
+    let final_lecturer_code;
+
+    // Phân biệt sinh viên và giảng viên
+    if (student.lecturer_code) {
+      const lecturer = await this.prisma.lecturer.findUnique({
+        where: { lecturer_code: student.lecturer_code },
+        include: { user: true },
+      });
+      if (!lecturer || !lecturer.user) {
+        throw new UnauthorizedException('Tài khoản giảng viên không tồn tại trong hệ thống');
+      }
+      user = lecturer.user;
+      final_lecturer_code = lecturer.lecturer_code;
+    } else if (student.student_code) {
+      // Chặn sinh viên đăng nhập bằng hình ảnh
+      throw new UnauthorizedException('Chức năng đăng nhập bằng khuôn mặt chỉ dành cho giảng viên.');
+    } else {
+      throw new UnauthorizedException('Không thể xác định danh tính từ kết quả khuôn mặt');
+    }
+
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      ...(final_student_code && { student_code: final_student_code }),
+      ...(final_lecturer_code && { lecturer_code: final_lecturer_code }),
+    };
+
+    return {
+      access_token: await this.jwtService.signAsync(payload),
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        student_code: final_student_code,
+        lecturer_code: final_lecturer_code
       }
     };
   }

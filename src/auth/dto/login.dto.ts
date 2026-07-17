@@ -9,3 +9,8 @@ export class LoginDto {
   @MinLength(6, { message: 'Mật khẩu phải từ 6 ký tự trở lên' })
   password!: string;
 }
+
+export class LoginFaceDto {
+  @IsNotEmpty({ message: 'Ảnh khuôn mặt không được để trống' })
+  imageBase64!: string;
+}

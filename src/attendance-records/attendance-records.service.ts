@@ -2,7 +2,7 @@ import { Injectable, ConflictException, NotFoundException, Logger, BadRequestExc
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateAttendanceRecordDto } from './dto/create-attendance-record.dto';
 import { UpdateAttendanceRecordDto } from './dto/update-attendance-record.dto';
-import { Prisma, RekognitionResult } from '@prisma/client';
+import { Prisma, RekognitionResult, AttendanceStatus } from '@prisma/client';
 import { LambdaService } from 'src/aws/lambda.service';
 import { ConfigService } from '@nestjs/config';
 import { CreateAttendanceRecordBulkDto } from './dto/create-attendance-record-bulk.dto';
@@ -21,6 +21,7 @@ const ATTENDANCE_RECORD_SELECT: Prisma.AttendanceRecordSelect = {
   confidence: true,
   attendance_time: true,
   note: true,
+  status: true,
   created_at: true,
   updated_at: true,
   student: {
@@ -92,6 +93,65 @@ export class AttendanceRecordsService {
 
     const student_code = student.student_code;
 
+    if (!student_code) {
+      throw new BadRequestException("Chỉ sinh viên mới có thể điểm danh ca thi.");
+    }
+
+    return this.processCheckIn(
+      student_code,
+      exam_schedule_id,
+      now,
+      'face',
+      rekognition_result as RekognitionResult,
+      confidence,
+      face_id
+    );
+  }
+
+  async checkInQR(student_code: string, exam_schedule_id: string) {
+    const examSchedule = await this.prisma.examSchedule.findUnique({
+      where: { id: exam_schedule_id },
+      select: {
+        id: true,
+        start_time: true,
+        duration: true,
+      }
+    });
+    if (!examSchedule) {
+      throw new NotFoundException(`Lịch thi không tồn tại`);
+    }
+
+    const now = dayjs();
+    const startTime = dayjs(examSchedule.start_time);
+    const endTime = startTime.add(examSchedule.duration, 'minute');
+
+    if (now.isBefore(startTime) || now.isAfter(endTime)) {
+      throw new BadRequestException(
+        `Chỉ có thể điểm danh trong thời gian thi ` +
+        `(${startTime.tz('Asia/Ho_Chi_Minh').format('HH:mm')} - ${endTime.tz('Asia/Ho_Chi_Minh').format('HH:mm')})`
+      );
+    }
+
+    return this.processCheckIn(
+      student_code,
+      exam_schedule_id,
+      now,
+      'qr',
+      undefined,
+      100, // Confidence for QR is effectively 100% since it's an exact match
+      undefined
+    );
+  }
+
+  private async processCheckIn(
+    student_code: string,
+    exam_schedule_id: string,
+    now: dayjs.Dayjs,
+    method: 'face' | 'qr',
+    rekognition_result?: RekognitionResult,
+    confidence?: number,
+    face_id?: string
+  ) {
     const validStudent = await this.prisma.attendanceRecord.findFirst({
       where: { exam_schedule_id, student_code }
     })
@@ -100,35 +160,42 @@ export class AttendanceRecordsService {
       throw new NotFoundException(`Sinh viên ${student_code} không tồn tại trong ca thi`);
     }
 
-    // Dùng đúng field từ DynamoDB: student.student_code
-    if (confidence < this.confidenceThreshold) {
-      this.logger.warn(
-        `Độ trùng khớp thấp: ${confidence} < ${this.confidenceThreshold} | student: ${student.student_code}`,
-      );
-      throw new BadRequestException(
-        `Độ trùng khớp ${confidence.toFixed(1)}% chưa đủ, vui lòng thử lại`,
-      );
+    if (method === 'face' && confidence !== undefined) {
+      if (confidence < this.confidenceThreshold) {
+        this.logger.warn(
+          `Độ trùng khớp thấp: ${confidence} < ${this.confidenceThreshold} | student: ${student_code}`,
+        );
+        throw new BadRequestException(
+          `Độ trùng khớp ${confidence.toFixed(1)}% chưa đủ, vui lòng thử lại`,
+        );
+      }
     }
+
     const existingStudent = await this.prisma.student.findUnique({
-      where: { student_code: student.student_code },
+      where: { student_code: student_code },
       select: {
         student_code: true,
         last_name: true,
         first_name: true
       }
     })
+    
     if (!existingStudent) {
-      throw new BadRequestException(`Sinh viên ${student.student_code} không có trong hệ thống.`);
+      throw new BadRequestException(`Sinh viên ${student_code} không có trong hệ thống.`);
     }
+    
     const fullName = `${existingStudent.last_name} ${existingStudent.first_name}`;
-    this.logger.log(
-      `Check-in thành công: ${student.student_code} | confidence: ${confidence} | faceId: ${face_id}`,
-    );
+    
+    if (method === 'face') {
+      this.logger.log(`Check-in khuôn mặt thành công: ${student_code} | confidence: ${confidence} | faceId: ${face_id}`);
+    } else {
+      this.logger.log(`Check-in QR thành công: ${student_code}`);
+    }
 
     // Kiểm tra xem đã điểm danh chưa
     if (validStudent.attendance_time) {
       return {
-        message: `Sinh viên ${fullName} - ${student.student_code} đã điểm danh rồi.`,
+        message: `Sinh viên ${fullName} - ${student_code} đã điểm danh rồi.`,
         data: {
           existingStudent,
           confidence,
@@ -148,14 +215,15 @@ export class AttendanceRecordsService {
       },
       data:{
         attendance_time: now.toDate(),
-        attendance_method: 'face',
-        rekognition_result: rekognition_result as RekognitionResult,
-        confidence: confidence,
+        attendance_method: method === 'qr' ? 'qr_code' : 'face',
+        ...(rekognition_result ? { rekognition_result } : {}),
+        ...(confidence ? { confidence } : {}),
+        status: 'present',
       }
     })
     
     return {
-      message: `Điểm danh thành công cho sinh viên ${fullName} - ${student?.student_code}`,
+      message: `Điểm danh thành công cho sinh viên ${fullName} - ${student_code}`,
       data: {
         existingStudent,
         confidence,
@@ -190,12 +258,14 @@ export class AttendanceRecordsService {
 
   async findAll(query: {
     search?: string;
-    student_code?: string; // Đã sửa thành optional (?)
+    student_code?: string;
     exam_schedule_id?: string;
     page?: number;
     limit?: number;
+    rekognition_result?:RekognitionResult;
+    status?: AttendanceStatus;
   } = {}) {
-    const { search, exam_schedule_id, student_code } = query;
+    const { search, exam_schedule_id, student_code, rekognition_result, status } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
 
@@ -205,13 +275,14 @@ export class AttendanceRecordsService {
     const where: Prisma.AttendanceRecordWhereInput = {
       ...(student_code ? { student_code } : {}),
       ...(exam_schedule_id ? { exam_schedule_id } : {}),
+      ...(status ? { status } : {}),
       ...(search ? {
         student: {
           OR: [
             { student_code: { contains: search, mode: 'insensitive' } },
             { first_name: { contains: search, mode: 'insensitive' } },
             { last_name: { contains: search, mode: 'insensitive' } },
-            { class_code: { contains: search, mode: 'insensitive' } }, // Fix nhẹ nếu schema bạn search class_code qua relation
+            { class_code: { contains: search, mode: 'insensitive' } },
           ]
         }
       } : {})

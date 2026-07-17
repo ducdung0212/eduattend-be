@@ -11,9 +11,10 @@ import {
 } from '@aws-sdk/client-lambda';
 
 // Khớp với DynamoDB Item trả về từ Lambda (partition key: rekognitionId)
-export interface StudentInfo {
+export interface UserInfo {
   rekognitionId: string;
-  student_code: string;
+  student_code?: string;
+  lecturer_code?: string;
 }
 
 // Khớp với response body Lambda trả về khi success:
@@ -21,10 +22,11 @@ export interface StudentInfo {
 export interface VerifyFaceResult {
   success: boolean;
   data?: {
-    student: StudentInfo; // toàn bộ record từ DynamoDB
+    student: UserInfo; // toàn bộ record từ DynamoDB
     confidence: number;   // Similarity từ Rekognition (0-100)
     face_id: string;      // FaceId trong Rekognition Collection
-    rekognition_result: string
+    rekognition_result: string;
+    is_lecturer?: boolean;
   };
   message: string;
 }
@@ -33,6 +35,7 @@ export interface VerifyFaceResult {
 export class LambdaService {
   private readonly client: LambdaClient;
   private readonly functionName: string;
+  private readonly lecturerFunctionName: string;
   private readonly logger = new Logger(LambdaService.name);
 
   constructor(private readonly configService: ConfigService) {
@@ -47,6 +50,9 @@ export class LambdaService {
     this.functionName = configService.getOrThrow<string>(
       'AWS_LAMBDA_FACE_RECOGNITION',
     );
+    this.lecturerFunctionName = configService.get<string>(
+      'AWS_LAMBDA_LECTURER_FACE_RECOGNITION',
+    ) || '';
   }
 
   // ─── LUỒNG 2: Xác thực khuôn mặt điểm danh ──────────────────────────
@@ -107,10 +113,11 @@ export class LambdaService {
       success: boolean;
       message: string;
       data?: {
-        student: StudentInfo;
+        student: UserInfo;
         confidence: number;
         face_id: string;
         rekognition_result: string;
+        is_lecturer?: boolean;
       };
     };
     try {
@@ -133,7 +140,8 @@ export class LambdaService {
           student: body.data!.student,
           confidence: body.data!.confidence,
           face_id: body.data!.face_id,
-          rekognition_result: body.data!.rekognition_result
+          rekognition_result: body.data!.rekognition_result,
+          is_lecturer: body.data!.is_lecturer,
         },
         message: body.message,
       };
@@ -144,6 +152,84 @@ export class LambdaService {
 
     if (finalMessage.includes('No matching face found')) {
       finalMessage = 'Không tìm thấy khuôn mặt trùng khớp. Vui lòng thử lại hoặc đăng ký khuôn mặt trước.';
+    }
+
+    return {
+      success: false,
+      message: finalMessage,
+    };
+  }
+
+  // ─── LUỒNG 3: Xác thực khuôn mặt giảng viên (Đăng nhập) ──────────────────
+  async verifyLecturerFace(
+    imageBase64: string,
+  ): Promise<VerifyFaceResult> {
+    if (!this.lecturerFunctionName) {
+      throw new InternalServerErrorException('Chưa cấu hình AWS_LAMBDA_LECTURER_FACE_RECOGNITION');
+    }
+
+    const payload = { image: imageBase64 };
+    let rawPayload: string;
+    try {
+      const command = new InvokeCommand({
+        FunctionName: this.lecturerFunctionName,
+        InvocationType: InvocationType.RequestResponse,
+        Payload: Buffer.from(JSON.stringify(payload)),
+      });
+
+      const response = await this.client.send(command);
+
+      if (response.FunctionError) {
+        const errBody = Buffer.from(response.Payload!).toString('utf-8');
+        this.logger.error(`Lecturer Lambda FunctionError: ${errBody}`);
+        throw new InternalServerErrorException('Lỗi xử lý từ Lambda giảng viên');
+      }
+
+      rawPayload = Buffer.from(response.Payload!).toString('utf-8');
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) throw error;
+      this.logger.error('Lỗi gọi Lecturer Lambda', error);
+      throw new InternalServerErrorException('Không thể kết nối dịch vụ nhận diện giảng viên');
+    }
+
+    let outerPayload: { statusCode: number; body: string };
+    try {
+      outerPayload = JSON.parse(rawPayload);
+    } catch {
+      throw new InternalServerErrorException('Phản hồi từ Lambda giảng viên không hợp lệ');
+    }
+
+    if (!outerPayload?.statusCode) {
+      throw new InternalServerErrorException('Định dạng phản hồi Lambda giảng viên không hợp lệ');
+    }
+
+    let body: any;
+    try {
+      body = typeof outerPayload.body === 'string'
+        ? JSON.parse(outerPayload.body)
+        : outerPayload.body;
+    } catch {
+      throw new InternalServerErrorException('Body phản hồi Lambda giảng viên không hợp lệ');
+    }
+
+    this.logger.log(`Lecturer Lambda statusCode: ${outerPayload.statusCode} | success: ${body?.success}`);
+
+    if (outerPayload.statusCode === 200 && body?.success === true) {
+      return {
+        success: true,
+        data: {
+          student: body.data!.lecturer || body.data!.student, // Hỗ trợ cả key 'lecturer' và 'student'
+          confidence: body.data!.confidence,
+          face_id: body.data!.face_id,
+          rekognition_result: body.data!.rekognition_result,
+        },
+        message: body.message,
+      };
+    }
+
+    let finalMessage = body?.message ?? 'Xác thực khuôn mặt giảng viên thất bại';
+    if (finalMessage.includes('No matching face found')) {
+      finalMessage = 'Không tìm thấy khuôn mặt giảng viên trùng khớp. Vui lòng thử lại hoặc đăng ký khuôn mặt trước.';
     }
 
     return {

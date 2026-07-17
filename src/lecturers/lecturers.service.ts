@@ -28,6 +28,11 @@ const LECTURER_SELECT: Prisma.LecturerSelect = {
       faculty_code: true,
       name: true
     }
+  },
+  photos: {
+    select: {
+      image_url: true,
+    }
   }
 };
 

@@ -7,6 +7,7 @@ import { RolesGuard } from 'src/common/guards/role.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CheckInDto } from './dto/check-in.dto';
+import { CheckInQrDto } from './dto/check-in-qr.dto';
 import { CreateAttendanceRecordBulkDto } from './dto/create-attendance-record-bulk.dto';
 import { ExamScheduleOwnerGuard } from 'src/common/guards/exam-schedule-owner.guard';
 
@@ -66,6 +67,16 @@ export class AttendanceRecordsController {
     return this.attendanceRecordsService.checkIn(
       file.buffer,
       checkInDto.exam_schedule_id
+    );
+  }
+
+  @Roles('admin','lecturer')
+  @UseGuards(ExamScheduleOwnerGuard)
+  @Post('check-in/qr')
+  async checkInQR(@Body() checkInQrDto: CheckInQrDto) {
+    return this.attendanceRecordsService.checkInQR(
+      checkInQrDto.student_code,
+      checkInQrDto.exam_schedule_id
     );
   }
 

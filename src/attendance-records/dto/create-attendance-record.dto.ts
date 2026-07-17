@@ -1,5 +1,5 @@
 import { IsNotEmpty, IsString, IsOptional, IsEnum, IsNumber, IsDateString } from 'class-validator';
-import { AttendanceMethod, RekognitionResult } from '@prisma/client';
+import { AttendanceMethod, RekognitionResult, AttendanceStatus } from '@prisma/client';
 export class CreateAttendanceRecordDto {
     @IsNotEmpty({message:"Mã sinh viên không được để trống"})
     @IsString()
@@ -27,4 +27,8 @@ export class CreateAttendanceRecordDto {
     @IsOptional()
     @IsString()
     note?: string;
+
+    @IsOptional()
+    @IsEnum(AttendanceStatus)
+    status?: AttendanceStatus;
 }

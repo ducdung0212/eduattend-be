@@ -15,7 +15,9 @@ import { AttendanceRecordsModule } from './attendance-records/attendance-records
 import { ExamSupervisorsModule } from './exam-supervisors/exam-supervisors.module';
 import { AwsModule } from './aws/aws.module';
 import { StudentPhotosModule } from './student_photos/student-photos.module';
+import { LecturerPhotosModule } from './lecturer-photos/lecturer-photos.module';
 import { ExamPeriodsModule } from './exam-periods/exam-periods.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -33,7 +35,9 @@ import { ExamPeriodsModule } from './exam-periods/exam-periods.module';
     ExamSupervisorsModule,
     AwsModule,
     StudentPhotosModule,
+    LecturerPhotosModule,
     ExamPeriodsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -87,9 +87,22 @@ model Lecturer {
   supervising_exams ExamSupervisor[]
   faculty           Faculty         @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
   user              User?           @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  photos            LecturerPhoto[]
 
   @@index([faculty_code])
   @@map("lecturers")
+}
+
+model LecturerPhoto {
+  lecturer_code       String    @db.VarChar(20)
+  image_url           String    @db.VarChar(255)
+  created_at          DateTime  @default(now()) @db.Timestamp(0)
+  updated_at          DateTime  @updatedAt @db.Timestamp(0)
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lecturer            Lecturer   @relation(fields: [lecturer_code], references: [lecturer_code], onDelete: Cascade)
+
+  @@index([lecturer_code])
+  @@map("lecturer_photos")
 }
 
 model ExamPeriod {
@@ -149,6 +162,7 @@ model AttendanceRecord {
   confidence         Decimal?           @db.Decimal(5, 2)
   attendance_time    DateTime?          @db.Timestamp(0)
   note               String?            @db.Text
+  status             AttendanceStatus?
   created_at         DateTime           @default(now()) @db.Timestamp(0)
   updated_at         DateTime           @updatedAt @db.Timestamp(0)
   id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -189,6 +203,13 @@ enum RekognitionResult {
   match
   not_match
   unknown
+}
+
+enum AttendanceStatus {
+  present
+  absent
+  late
+  excused
 }
 
 model Room {

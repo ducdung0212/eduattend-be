@@ -15,6 +15,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 export interface GenerateUploadUrlInput {
   fileName: string;
   fileType: 'image/jpeg' | 'image/png';
+  folder?: string;
 }
 
 export interface GenerateUploadUrlResult {
@@ -27,6 +28,7 @@ export interface GenerateUploadUrlResult {
 export interface ConfirmUploadInput {
   student_code: string;
   fileName: string;
+  folder?: string;
 }
 
 export interface ConfirmUploadResult {
@@ -57,7 +59,7 @@ export class S3Service {
     });
   }
 
-  private parseStudentFileName(fileName: string): {
+  private parseUploadFileName(fileName: string, folder: string = 'images_to_register'): {
     student_code: string;
     safeFileName: string;
     s3Key: string;
@@ -68,13 +70,13 @@ export class S3Service {
     const student_code = fileName.substring(0, lastDot);
     const extension = fileName.substring(lastDot + 1).toLowerCase();
 
-    const validCode = /^(DH|LT)\d{8}$/i.test(student_code);
+    const validCode = /^[A-Za-z0-9_-]+$/.test(student_code);
     const validExt = ['jpg', 'jpeg', 'png'].includes(extension);
 
     if (!validCode || !validExt) return null;
 
     const safeFileName = fileName.replace(/[^A-Za-z0-9_.-]/g, '_');
-    const s3Key = `images_to_register/${safeFileName}`;
+    const s3Key = `${folder}/${safeFileName}`;
 
     return { student_code: student_code.toUpperCase(), safeFileName, s3Key };
   }
@@ -83,7 +85,8 @@ export class S3Service {
     files: GenerateUploadUrlInput[],
   ): Promise<GenerateUploadUrlResult[]> {
     const promises = files.map(async (file) => {
-      const parsed = this.parseStudentFileName(file.fileName);
+      const folder = file.folder || 'images_to_register';
+      const parsed = this.parseUploadFileName(file.fileName, folder);
 
       if (!parsed) {
         return {
@@ -127,7 +130,8 @@ export class S3Service {
     uploads: ConfirmUploadInput[],
   ): Promise<ConfirmUploadResult[]> {
     const promises = uploads.map(async (upload) => {
-      const parsed = this.parseStudentFileName(upload.fileName);
+      const folder = upload.folder || 'images_to_register';
+      const parsed = this.parseUploadFileName(upload.fileName, folder);
 
       if (!parsed) {
         return {
@@ -188,8 +192,8 @@ export class S3Service {
   }
 
   // Hàm nhận vào fileName, tự phân tích ra s3Key để xóa ảnh rác
-  async deleteUnconfirmedFile(fileName: string): Promise<void> {
-    const parsed = this.parseStudentFileName(fileName);
+  async deleteUnconfirmedFile(fileName: string, folder: string = 'images_to_register'): Promise<void> {
+    const parsed = this.parseUploadFileName(fileName, folder);
     
     if (!parsed) return;
 

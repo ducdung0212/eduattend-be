@@ -136,8 +136,9 @@ export class StudentsService {
     faculty_code?: string;
     page?: number;
     limit?: number;
+    is_has_photo?:boolean;
   } = {}) {
-    const { search, class_code, faculty_code } = query;
+    const { search, class_code, faculty_code, is_has_photo } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
     const take = Math.min(limit, 100);
@@ -145,6 +146,7 @@ export class StudentsService {
 
     const where: Prisma.StudentWhereInput = {
       ...(class_code ? { class_code } : {}),
+      ...(is_has_photo === true ? { photos: { some: {} } } : is_has_photo === false ? { photos: { none: {} } } : {}),
       ...(faculty_code ? { class: { faculty_code } } : {}),
       ...(search ? {
         OR: [

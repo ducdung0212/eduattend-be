@@ -23,6 +23,7 @@ export class StudentsController {
     @Query('search') search?: string,
     @Query('class_code') class_code?: string,
     @Query('faculty_code') faculty_code?: string,
+    @Query('is_has_photo') is_has_photo?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -30,6 +31,7 @@ export class StudentsController {
       search,
       class_code,
       faculty_code,
+      is_has_photo: is_has_photo === 'true' ? true : is_has_photo === 'false' ? false : undefined,
       page: page ? +page : undefined,
       limit: limit ? +limit : undefined,
     });
