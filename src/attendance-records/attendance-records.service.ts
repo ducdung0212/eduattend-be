@@ -160,17 +160,6 @@ export class AttendanceRecordsService {
       throw new NotFoundException(`Sinh viên ${student_code} không tồn tại trong ca thi`);
     }
 
-    if (method === 'face' && confidence !== undefined) {
-      if (confidence < this.confidenceThreshold) {
-        this.logger.warn(
-          `Độ trùng khớp thấp: ${confidence} < ${this.confidenceThreshold} | student: ${student_code}`,
-        );
-        throw new BadRequestException(
-          `Độ trùng khớp ${confidence.toFixed(1)}% chưa đủ, vui lòng thử lại`,
-        );
-      }
-    }
-
     const existingStudent = await this.prisma.student.findUnique({
       where: { student_code: student_code },
       select: {
@@ -185,6 +174,17 @@ export class AttendanceRecordsService {
     }
     
     const fullName = `${existingStudent.last_name} ${existingStudent.first_name}`;
+
+    if (method === 'face' && confidence !== undefined) {
+      if (confidence < this.confidenceThreshold) {
+        this.logger.warn(
+          `Độ trùng khớp thấp: ${confidence} < ${this.confidenceThreshold} | student: ${student_code}`,
+        );
+        throw new BadRequestException(
+          `Hệ thống nhận ra sinh viên ${fullName} - ${student_code} nhưng độ trùng khớp chỉ đạt ${confidence.toFixed(1)}% (yêu cầu ${this.confidenceThreshold}%). Giảng viên vui lòng xem xét.`,
+        );
+      }
+    }
     
     if (method === 'face') {
       this.logger.log(`Check-in khuôn mặt thành công: ${student_code} | confidence: ${confidence} | faceId: ${face_id}`);
