@@ -7,16 +7,15 @@ datasource db {
 }
 
 model User {
-  name              String
-  email             String         @unique
-  role              Role           @default(lecturer)
-  password          String
-  remember_token    String?        @db.VarChar(100)
-  created_at        DateTime       @default(now()) @db.Timestamp(0)
-  updated_at        DateTime       @updatedAt @db.Timestamp(0)
-  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  lecturer          Lecturer?
-  student           Student?
+  name       String
+  email      String    @unique
+  role       Role      @default(lecturer)
+  password   String
+  created_at DateTime  @default(now()) @db.Timestamp(0)
+  updated_at DateTime  @updatedAt @db.Timestamp(0)
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lecturer   Lecturer?
+  student    Student?
 
   @@map("users")
 }
@@ -34,7 +33,7 @@ model Faculty {
 
 model Class {
   class_code   String    @id @db.VarChar(20)
-  name   String    @db.VarChar(100)
+  name         String    @db.VarChar(100)
   faculty_code String    @db.VarChar(20)
   created_at   DateTime  @default(now()) @db.Timestamp(0)
   updated_at   DateTime  @updatedAt @db.Timestamp(0)
@@ -60,14 +59,14 @@ model Student {
   class_code         String             @db.VarChar(20)
   last_name          String             @db.VarChar(70)
   first_name         String             @db.VarChar(30)
-  email              String            @unique @db.VarChar(100)
+  email              String             @unique @db.VarChar(100)
   phone              String?            @unique @db.VarChar(15)
   created_at         DateTime           @default(now()) @db.Timestamp(0)
   updated_at         DateTime           @updatedAt @db.Timestamp(0)
   user_id            String?            @unique @db.Uuid
   attendance_records AttendanceRecord[]
   photos             StudentPhoto[]
-  class              Class             @relation(fields: [class_code], references: [class_code], onDelete: Restrict)
+  class              Class              @relation(fields: [class_code], references: [class_code], onDelete: Restrict)
   user               User?              @relation(fields: [user_id], references: [id], onDelete: SetNull)
 
   @@index([class_code])
@@ -76,17 +75,17 @@ model Student {
 
 model Lecturer {
   lecturer_code     String           @id @db.VarChar(20)
-  last_name         String          @db.VarChar(70)
-  first_name        String          @db.VarChar(30)
-  email             String          @unique @db.VarChar(100)
-  phone             String?         @unique @db.VarChar(15)
-  faculty_code      String          @db.VarChar(20)
+  last_name         String           @db.VarChar(70)
+  first_name        String           @db.VarChar(30)
+  email             String           @unique @db.VarChar(100)
+  phone             String?          @unique @db.VarChar(15)
+  faculty_code      String           @db.VarChar(20)
   created_at        DateTime         @default(now()) @db.Timestamp(0)
   updated_at        DateTime         @updatedAt @db.Timestamp(0)
   user_id           String?          @unique @db.Uuid
   supervising_exams ExamSupervisor[]
-  faculty           Faculty         @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
-  user              User?           @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  faculty           Faculty          @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
+  user              User?            @relation(fields: [user_id], references: [id], onDelete: SetNull)
   photos            LecturerPhoto[]
 
   @@index([faculty_code])
@@ -94,12 +93,12 @@ model Lecturer {
 }
 
 model LecturerPhoto {
-  lecturer_code       String    @db.VarChar(20)
-  image_url           String    @db.VarChar(255)
-  created_at          DateTime  @default(now()) @db.Timestamp(0)
-  updated_at          DateTime  @updatedAt @db.Timestamp(0)
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  lecturer            Lecturer   @relation(fields: [lecturer_code], references: [lecturer_code], onDelete: Cascade)
+  lecturer_code String   @db.VarChar(20)
+  image_url     String   @db.VarChar(255)
+  created_at    DateTime @default(now()) @db.Timestamp(0)
+  updated_at    DateTime @updatedAt @db.Timestamp(0)
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lecturer      Lecturer @relation(fields: [lecturer_code], references: [lecturer_code], onDelete: Cascade)
 
   @@index([lecturer_code])
   @@map("lecturer_photos")
@@ -132,7 +131,7 @@ model ExamSchedule {
   subject            Subject            @relation(fields: [subject_code], references: [subject_code], onDelete: Restrict)
   room               Room               @relation(fields: [room_code], references: [room_code], onDelete: Restrict)
   exam_period        ExamPeriod?        @relation(fields: [exam_period_id], references: [id], onDelete: SetNull)
-  exam_supervisors        ExamSupervisor[]
+  exam_supervisors   ExamSupervisor[]
 
   @@unique([subject_code, start_time, room_code])
   @@index([room_code])
@@ -177,12 +176,12 @@ model AttendanceRecord {
 }
 
 model StudentPhoto {
-  student_code        String    @db.VarChar(20)
-  image_url           String    @db.VarChar(255)
-  created_at          DateTime  @default(now()) @db.Timestamp(0)
-  updated_at          DateTime  @updatedAt @db.Timestamp(0)
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  student             Student   @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
+  student_code String   @db.VarChar(20)
+  image_url    String   @db.VarChar(255)
+  created_at   DateTime @default(now()) @db.Timestamp(0)
+  updated_at   DateTime @updatedAt @db.Timestamp(0)
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  student      Student  @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
 
   @@index([student_code])
   @@map("student_photos")

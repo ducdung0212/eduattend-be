@@ -89,7 +89,7 @@ export class AttendanceRecordsService {
         result.message ?? 'Không nhận diện được khuôn mặt',
       );
     }
-    const { student, confidence, face_id,rekognition_result } = result.data;
+    const { student, confidence, face_id, rekognition_result } = result.data;
 
     const student_code = student.student_code;
 
@@ -152,14 +152,6 @@ export class AttendanceRecordsService {
     confidence?: number,
     face_id?: string
   ) {
-    const validStudent = await this.prisma.attendanceRecord.findFirst({
-      where: { exam_schedule_id, student_code }
-    })
-
-    if (!validStudent) {
-      throw new NotFoundException(`Sinh viên ${student_code} không tồn tại trong ca thi`);
-    }
-
     const existingStudent = await this.prisma.student.findUnique({
       where: { student_code: student_code },
       select: {
@@ -167,13 +159,59 @@ export class AttendanceRecordsService {
         last_name: true,
         first_name: true
       }
-    })
-    
+    });
+
     if (!existingStudent) {
       throw new BadRequestException(`Sinh viên ${student_code} không có trong hệ thống.`);
     }
-    
+
     const fullName = `${existingStudent.last_name} ${existingStudent.first_name}`;
+
+    const validStudent = await this.prisma.attendanceRecord.findFirst({
+      where: { exam_schedule_id, student_code }
+    });
+
+    if (!validStudent) {
+      // Tìm lịch thi của sinh viên trong ngày hôm nay
+      const startOfDay = now.tz("Asia/Ho_Chi_Minh").startOf('day').toDate();
+      const endOfDay = now.tz("Asia/Ho_Chi_Minh").endOf('day').toDate();
+
+      const todaySchedules = await this.prisma.attendanceRecord.findMany({
+        where: {
+          student_code: student_code,
+          exam_schedule: {
+            start_time: {
+              gte: startOfDay,
+              lte: endOfDay,
+            }
+          }
+        },
+        include: {
+          exam_schedule: {
+            include: {
+              subject: true,
+              room: true
+            }
+          }
+        },
+        orderBy: {
+          exam_schedule: {
+            start_time: 'asc'
+          }
+        }
+      });
+
+      if (todaySchedules.length > 0) {
+        const scheduleDetails = todaySchedules.map(r => {
+          const s = r.exam_schedule;
+          const timeStr = dayjs(s.start_time).tz("Asia/Ho_Chi_Minh").format('HH:mm');
+          return `môn ${s.subject.name} lúc ${timeStr} tại phòng ${s.room?.name || ''}`;
+        }).join(', ');
+        throw new NotFoundException(`Sinh viên ${fullName} (${student_code}) đi nhầm phòng. Lịch thi hôm nay: ${scheduleDetails}.`);
+      }
+
+      throw new NotFoundException(`Sinh viên ${fullName} (${student_code}) không thuộc ca thi này và không có lịch thi nào trong hôm nay.`);
+    }
 
     if (method === 'face' && confidence !== undefined) {
       if (confidence < this.confidenceThreshold) {
@@ -185,7 +223,7 @@ export class AttendanceRecordsService {
         );
       }
     }
-    
+
     if (method === 'face') {
       this.logger.log(`Check-in khuôn mặt thành công: ${student_code} | confidence: ${confidence} | faceId: ${face_id}`);
     } else {
@@ -207,13 +245,13 @@ export class AttendanceRecordsService {
 
     // Sửa attendance vào DB qua Prisma
     await this.prisma.attendanceRecord.update({
-      where:{
+      where: {
         student_code_exam_schedule_id: {
           student_code,
           exam_schedule_id
         }
       },
-      data:{
+      data: {
         attendance_time: now.toDate(),
         attendance_method: method === 'qr' ? 'qr_code' : 'face',
         ...(rekognition_result ? { rekognition_result } : {}),
@@ -221,7 +259,7 @@ export class AttendanceRecordsService {
         status: 'present',
       }
     })
-    
+
     return {
       message: `Điểm danh thành công cho sinh viên ${fullName} - ${student_code}`,
       data: {
@@ -262,7 +300,7 @@ export class AttendanceRecordsService {
     exam_schedule_id?: string;
     page?: number;
     limit?: number;
-    rekognition_result?:RekognitionResult;
+    rekognition_result?: RekognitionResult;
     status?: AttendanceStatus;
   } = {}) {
     const { search, exam_schedule_id, student_code, rekognition_result, status } = query;
