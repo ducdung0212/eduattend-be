@@ -1,5 +1,5 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
-import { ConfirmUploadResult, S3Service } from 'src/aws/s3.service';
+import { ConfirmUploadResult, S3Service, GenerateUploadUrlResult } from 'src/aws/s3.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { GenerateLecturerUploadUrlItemDto } from './dto/generate-upload-url.dto';
 import { ConfirmLecturerUploadItemDto } from './dto/confirm-upload.dto';
@@ -13,9 +13,63 @@ export class LecturerPhotosService {
         private readonly s3Service: S3Service,
     ) {}
 
-    async generateUploadUrls(files: GenerateLecturerUploadUrlItemDto[]) {
-        const payload = files.map(f => ({ ...f, folder: 'lecturer_images' }));
-        return this.s3Service.generateUploadUrls(payload);
+    async generateUploadUrls(files: GenerateLecturerUploadUrlItemDto[]): Promise<GenerateUploadUrlResult[]> {
+        const parsedFiles = files.map(file => {
+            const parsed = this.s3Service.parseUploadFileName(file.fileName, 'lecturer_images');
+            return { ...file, lecturer_code: parsed?.student_code || '', folder: 'lecturer_images' };
+        });
+
+        const lecturerCodesToVerify = [...new Set(parsedFiles.map(f => f.lecturer_code).filter(Boolean))];
+
+        let existingLecturers: { lecturer_code: string }[] = [];
+        if (lecturerCodesToVerify.length > 0) {
+            try {
+                existingLecturers = await this.prisma.lecturer.findMany({
+                    where: { lecturer_code: { in: lecturerCodesToVerify } },
+                    select: { lecturer_code: true },
+                });
+            } catch (dbErr) {
+                this.logger.error('Lỗi khi truy vấn bảng lecturer', dbErr);
+                throw new InternalServerErrorException('Lỗi máy chủ khi kiểm tra dữ liệu giảng viên');
+            }
+        }
+
+        const existingCodeSet = new Set(existingLecturers.map((s) => s.lecturer_code.toUpperCase()));
+
+        const validFiles: { fileName: string; fileType: "image/jpeg" | "image/png"; folder: string }[] = [];
+        const results: GenerateUploadUrlResult[] = [];
+
+        for (const file of parsedFiles) {
+            if (!file.lecturer_code) {
+                results.push({
+                    fileName: file.fileName,
+                    success: false,
+                    message: "Tên tệp không hợp lệ"
+                });
+                continue;
+            }
+
+            if (!existingCodeSet.has(file.lecturer_code)) {
+                results.push({
+                    fileName: file.fileName,
+                    success: false,
+                    message: `Giảng viên chưa có trong hệ thống.`
+                });
+            } else {
+                validFiles.push({
+                    fileName: file.fileName,
+                    fileType: file.fileType as "image/jpeg" | "image/png",
+                    folder: 'lecturer_images'
+                });
+            }
+        }
+
+        if (validFiles.length > 0) {
+            const s3Results = await this.s3Service.generateUploadUrls(validFiles);
+            results.push(...s3Results);
+        }
+
+        return results;
     }
 
     async confirmUploads(uploads: ConfirmLecturerUploadItemDto[]): Promise<ConfirmUploadResult[]> {

@@ -1,5 +1,5 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
-import { ConfirmUploadResult, S3Service } from 'src/aws/s3.service';
+import { ConfirmUploadResult, S3Service, GenerateUploadUrlResult } from 'src/aws/s3.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { GenerateUploadUrlDto, GenerateUploadUrlItemDto } from './dto/generate-upload-url.dto';
 import { ConfirmUploadItemDto } from './dto/confirm-upload.dto';
@@ -13,8 +13,62 @@ export class StudentPhotosService {
         private readonly s3Service: S3Service,
     ) {}
 
-    async generateUploadUrls(files: GenerateUploadUrlItemDto[]) {
-        return this.s3Service.generateUploadUrls(files);
+    async generateUploadUrls(files: GenerateUploadUrlItemDto[]): Promise<GenerateUploadUrlResult[]> {
+        const parsedFiles = files.map(file => {
+            const parsed = this.s3Service.parseUploadFileName(file.fileName, 'images_to_register');
+            return { ...file, student_code: parsed?.student_code || '' };
+        });
+
+        const studentCodesToVerify = [...new Set(parsedFiles.map(f => f.student_code).filter(Boolean))];
+
+        let existingStudents: { student_code: string }[] = [];
+        if (studentCodesToVerify.length > 0) {
+            try {
+                existingStudents = await this.prisma.student.findMany({
+                    where: { student_code: { in: studentCodesToVerify } },
+                    select: { student_code: true },
+                });
+            } catch (dbErr) {
+                this.logger.error("Lỗi khi truy vấn bảng student", dbErr);
+                throw new InternalServerErrorException('Lỗi máy chủ khi kiểm tra dữ liệu sinh viên');
+            }
+        }
+
+        const existingCodeSet = new Set(existingStudents.map((s) => s.student_code.toUpperCase()));
+
+        const validFiles: GenerateUploadUrlItemDto[] = [];
+        const results: GenerateUploadUrlResult[] = [];
+
+        for (const file of parsedFiles) {
+            if (!file.student_code) {
+                results.push({
+                    fileName: file.fileName,
+                    success: false,
+                    message: "Tên tệp không hợp lệ"
+                });
+                continue;
+            }
+
+            if (!existingCodeSet.has(file.student_code)) {
+                results.push({
+                    fileName: file.fileName,
+                    success: false,
+                    message: `Sinh viên chưa có trong hệ thống.`
+                });
+            } else {
+                validFiles.push({
+                    fileName: file.fileName,
+                    fileType: file.fileType
+                });
+            }
+        }
+
+        if (validFiles.length > 0) {
+            const s3Results = await this.s3Service.generateUploadUrls(validFiles);
+            results.push(...s3Results);
+        }
+
+        return results;
     }
 
     async confirmUploads(uploads: ConfirmUploadItemDto[]): Promise<ConfirmUploadResult[]> {

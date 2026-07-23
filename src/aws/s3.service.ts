@@ -59,7 +59,7 @@ export class S3Service {
     });
   }
 
-  private parseUploadFileName(fileName: string, folder: string = 'images_to_register'): {
+  public parseUploadFileName(fileName: string, folder: string = 'images_to_register'): {
     student_code: string;
     safeFileName: string;
     s3Key: string;
