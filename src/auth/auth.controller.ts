@@ -1,6 +1,6 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, Get } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { LoginDto, LoginFaceDto } from './dto/login.dto';
+import { LoginDto, LoginFaceDto, RefreshDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 @Controller('auth')
 export class AuthController {
@@ -21,5 +21,11 @@ export class AuthController {
   @Post('login-face')
   async loginFace(@Body() loginFaceDto: LoginFaceDto) {
     return this.authService.loginFace(loginFaceDto.imageBase64);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('refresh')
+  async refresh(@Body() refreshDto: RefreshDto) {
+    return this.authService.refreshToken(refreshDto.refresh_token);
   }
 }

@@ -14,3 +14,8 @@ export class LoginFaceDto {
   @IsNotEmpty({ message: 'Ảnh khuôn mặt không được để trống' })
   imageBase64!: string;
 }
+
+export class RefreshDto {
+  @IsNotEmpty({ message: 'Refresh token không được để trống' })
+  refresh_token!: string;
+}

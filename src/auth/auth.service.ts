@@ -12,6 +12,17 @@ export class AuthService {
     private lambdaService: LambdaService,
   ) {}
 
+  private async generateTokens(payload: any) {
+    const [access_token, refresh_token] = await Promise.all([
+      this.jwtService.signAsync(payload),
+      this.jwtService.signAsync(payload, {
+        secret: process.env.JWT_REFRESH_SECRET || 'refresh-secret-key-for-eduattend',
+        expiresIn: '7d',
+      }),
+    ]);
+    return { access_token, refresh_token };
+  }
+
   async login(email: string, pass: string) {
     // 1. Tìm thông tin cơ bản trong bảng User
     const user = await this.prisma.user.findUnique({ where: { email } });
@@ -43,8 +54,9 @@ export class AuthService {
     };
 
     // 5. Trả kết quả trọn gói về cho Frontend
+    const tokens = await this.generateTokens(payload);
     return {
-      access_token: await this.jwtService.signAsync(payload),
+      ...tokens,
       user: {
         id: user.id,
         name: user.name,
@@ -94,8 +106,9 @@ export class AuthService {
       ...(final_lecturer_code && { lecturer_code: final_lecturer_code }),
     };
 
+    const tokens = await this.generateTokens(payload);
     return {
-      access_token: await this.jwtService.signAsync(payload),
+      ...tokens,
       user: {
         id: user.id,
         name: user.name,
@@ -105,5 +118,30 @@ export class AuthService {
         lecturer_code: final_lecturer_code
       }
     };
+  }
+
+  async refreshToken(refreshToken: string) {
+    try {
+      const payload = await this.jwtService.verifyAsync(refreshToken, {
+        secret: process.env.JWT_REFRESH_SECRET || 'refresh-secret-key-for-eduattend',
+      });
+      
+      const newPayload = { 
+        sub: payload.sub, 
+        email: payload.email, 
+        role: payload.role,
+        ...(payload.student_code && { student_code: payload.student_code }),
+        ...(payload.lecturer_code && { lecturer_code: payload.lecturer_code }),
+      };
+
+      const tokens = await this.generateTokens(newPayload);
+      
+      return {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+      };
+    } catch (e) {
+      throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã hết hạn');
+    }
   }
 }
