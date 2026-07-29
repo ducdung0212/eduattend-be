@@ -1,11 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as ExcelJS from 'exceljs';
-import { emit, emitWarning } from 'process';
+import { S3Service } from 'src/aws/s3.service';
 
 const STUDENT_SELECT: Prisma.StudentSelect = {
   student_code: true,
@@ -44,7 +44,12 @@ const STUDENT_SELECT: Prisma.StudentSelect = {
 
 @Injectable()
 export class StudentsService {
-  constructor(private prisma: PrismaService) { }
+  private readonly logger = new Logger(StudentsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private s3Service: S3Service,
+  ) { }
 
   async create(createStudentDto: CreateStudentDto) {
     const { create_account, ...rest } = createStudentDto;
@@ -223,11 +228,29 @@ export class StudentsService {
   async remove(student_code: string) {
     await this.findOne(student_code);
 
-    await this.prisma.student.delete({
-      where: { student_code }
+    // Lấy ảnh của sinh viên trước khi xóa
+    const photo = await this.prisma.studentPhoto.findFirst({
+      where: { student_code },
+      select: { image_url: true },
     });
+
+    // Xóa sinh viên (StudentPhoto sẽ bị xóa cascade theo DB)
+    await this.prisma.student.delete({
+      where: { student_code },
+    });
+
+    // Xóa ảnh trên S3 bằng full URL (bất đồng bộ, không chặn response)
+    if (photo?.image_url) {
+      this.s3Service.deleteByUrl(photo.image_url).catch((err) => {
+        this.logger.error(
+          `Không thể xóa ảnh S3 của sinh viên ${student_code}: ${photo.image_url}`,
+          err,
+        );
+      });
+    }
+
     return {
-      message: "Xóa sinh viên thành công"
+      message: "Xóa sinh viên thành công",
     };
   }
 

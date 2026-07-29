@@ -210,6 +210,32 @@ export class S3Service {
     }
   }
 
+  // Hàm nhận vào full S3 URL và xóa object tương ứng
+  async deleteByUrl(imageUrl: string): Promise<void> {
+    // Extract S3 key từ URL: https://bucket.s3.region.amazonaws.com/<key>
+    const marker = '.amazonaws.com/';
+    const idx = imageUrl.indexOf(marker);
+    if (idx === -1) {
+      this.logger.warn(`URL không hợp lệ, bỏ qua xóa S3: ${imageUrl}`);
+      return;
+    }
+
+    const s3Key = imageUrl.substring(idx + marker.length);
+    if (!s3Key) return;
+
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: s3Key,
+        })
+      );
+      this.logger.log(`Đã xóa ảnh trên S3: ${s3Key}`);
+    } catch (error) {
+      this.logger.error(`Lỗi không thể xóa ảnh trên S3: ${s3Key}`, error);
+    }
+  }
+
   onModuleDestroy() {
     this.client.destroy();
   }
