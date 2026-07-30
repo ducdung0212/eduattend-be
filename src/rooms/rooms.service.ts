@@ -104,6 +104,15 @@ export class RoomsService {
 
   async remove(room_code: string) {
     await this.findOne(room_code);
+
+    const existingSchedule = await this.prisma.examSchedule.findFirst({
+      where: { room_code },
+      select: { id: true }
+    });
+    if (existingSchedule) {
+      throw new ConflictException('Đang có lịch thi sử dụng phòng này, không thể xóa!');
+    }
+
     await this.prisma.room.delete({
       where:{room_code}
     })

@@ -108,6 +108,22 @@ export class FacultiesService {
   async remove(faculty_code: string) {
     await this.findOne(faculty_code);
 
+    const existingClass = await this.prisma.class.findFirst({
+      where: { faculty_code },
+      select: { class_code: true }
+    });
+    if (existingClass) {
+      throw new ConflictException('Đang tồn tại lớp thuộc khoa này, không thể xóa!');
+    }
+
+    const existingLecturer = await this.prisma.lecturer.findFirst({
+      where: { faculty_code },
+      select: { lecturer_code: true }
+    });
+    if (existingLecturer) {
+      throw new ConflictException('Đang tồn tại giảng viên thuộc khoa này, không thể xóa!');
+    }
+
     await this.prisma.faculty.delete({
       where: { faculty_code }
     });

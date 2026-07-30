@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { LambdaService } from '../aws/lambda.service';
@@ -144,4 +144,26 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token không hợp lệ hoặc đã hết hạn');
     }
   }
+   async changePassword(email: string, curPass: string, newPass: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { email }
+    });
+    if (!user) {
+      throw new NotFoundException('Người dùng không tồn tại');
+    }
+    if (curPass === newPass) {
+      throw new BadRequestException('Mật khẩu mới không được trùng với mật khẩu hiện tại');
+    }
+    const isMatch = await bcrypt.compare(curPass, user.password);
+    if (!isMatch) {
+      throw new BadRequestException('Mật khẩu hiện tại không đúng');
+    }
+    const hashPassword = await bcrypt.hash(newPass, 10);
+    await this.prisma.user.update({
+      where: { email },
+      data: { password: hashPassword }
+    });
+    return { message: 'Đổi mật khẩu thành công' };
+  }
+
 }

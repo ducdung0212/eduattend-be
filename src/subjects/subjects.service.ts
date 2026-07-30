@@ -108,6 +108,14 @@ export class SubjectsService {
   async remove(subject_code: string) {
     await this.findOne(subject_code);
 
+    const existingSchedule = await this.prisma.examSchedule.findFirst({
+      where: { subject_code },
+      select: { id: true }
+    });
+    if (existingSchedule) {
+      throw new ConflictException('Đang có lịch thi của môn học này, không thể xóa!');
+    }
+
     await this.prisma.subject.delete({
       where: { subject_code }
     });

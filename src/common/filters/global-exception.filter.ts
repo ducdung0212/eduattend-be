@@ -35,6 +35,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
        if ((exception as any).code === 'P2002') {
           status = HttpStatus.CONFLICT; // 409
           message = 'Dữ liệu này đã tồn tại trong hệ thống.';
+       } else if ((exception as any).code === 'P2003') {
+          status = HttpStatus.CONFLICT; // 409
+          message = 'Không thể xóa dữ liệu này vì đang có các dữ liệu khác phụ thuộc vào nó.';
        } else {
           // Ghi log các lỗi không lường trước (Database rớt, sai cú pháp SQL...)
           console.error(' [Unhandled System Error]:', exception);
