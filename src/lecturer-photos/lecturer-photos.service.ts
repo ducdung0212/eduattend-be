@@ -193,4 +193,27 @@ export class LecturerPhotosService {
         }
         return finalResults;
     }
+
+    async deletePhoto(lecturer_code: string): Promise<{ message: string }> {
+        const photo = await this.prisma.lecturerPhoto.findFirst({
+            where: { lecturer_code },
+            select: { id: true, image_url: true },
+        });
+
+        if (!photo) {
+            return { message: 'Giảng viên này chưa có ảnh' };
+        }
+
+        // Xóa record trong DB
+        await this.prisma.lecturerPhoto.deleteMany({
+            where: { lecturer_code },
+        });
+
+        // Xóa ảnh trên S3
+        await this.s3Service.deleteByUrl(photo.image_url).catch((err) => {
+            this.logger.error(`Không thể xóa ảnh S3 của giảng viên ${lecturer_code}`, err);
+        });
+
+        return { message: 'Xóa ảnh giảng viên thành công' };
+    }
 }

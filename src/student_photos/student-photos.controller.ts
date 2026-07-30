@@ -1,5 +1,5 @@
 // student-photos/student-photos.controller.ts
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Delete, Param, Body, UseGuards } from '@nestjs/common';
 import { StudentPhotosService } from './student-photos.service';
 import { GenerateUploadUrlDto } from './dto/generate-upload-url.dto';
 import { ConfirmUploadDto } from './dto/confirm-upload.dto';
@@ -21,5 +21,10 @@ export class StudentPhotosController {
   @Post('confirm-uploads')
   confirmUploads(@Body() dto: ConfirmUploadDto) {
     return this.studentPhotosService.confirmUploads(dto.uploads);
+  }
+
+  @Delete(':student_code')
+  deletePhoto(@Param('student_code') student_code: string) {
+    return this.studentPhotosService.deletePhoto(student_code);
   }
 }

@@ -1,10 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateLecturerDto } from './dto/create-lecturer.dto';
 import { UpdateLecturerDto } from './dto/update-lecturer.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as ExcelJS from 'exceljs';
+import { S3Service } from 'src/aws/s3.service';
 
 // source: 1 - Cập nhật hằng số SELECT
 const LECTURER_SELECT: Prisma.LecturerSelect = {
@@ -38,7 +39,12 @@ const LECTURER_SELECT: Prisma.LecturerSelect = {
 
 @Injectable()
 export class LecturersService {
-  constructor(private prisma: PrismaService) { }
+  private readonly logger = new Logger(LecturersService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private s3Service: S3Service,
+  ) { }
 
   // lecturers.service.ts
   async create(createLecturerDto: CreateLecturerDto) {
@@ -116,8 +122,9 @@ export class LecturersService {
     faculty_code?: string;
     page?: number;
     limit?: number;
+    is_has_photo?: boolean;
   } = {}) {
-    const { search, faculty_code } = query;
+    const { search, faculty_code, is_has_photo } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
     const take = Math.min(limit, 100);
@@ -125,6 +132,7 @@ export class LecturersService {
 
     const where: Prisma.LecturerWhereInput = {
       ...(faculty_code ? { faculty_code } : {}),
+      ...(is_has_photo === true ? { photos: { some: {} } } : is_has_photo === false ? { photos: { none: {} } } : {}),
       ...(search ? {
         OR: [
           { lecturer_code: { contains: search, mode: 'insensitive' } },
@@ -210,11 +218,30 @@ export class LecturersService {
 
   async remove(lecturer_code: string) {
     await this.findOne(lecturer_code);
-    await this.prisma.lecturer.delete({
-      where: { lecturer_code }
+
+    // Lấy ảnh của giảng viên trước khi xóa
+    const photo = await this.prisma.lecturerPhoto.findFirst({
+      where: { lecturer_code },
+      select: { image_url: true },
     });
+
+    // Xóa giảng viên (LecturerPhoto sẽ bị xóa cascade theo DB)
+    await this.prisma.lecturer.delete({
+      where: { lecturer_code },
+    });
+
+    // Xóa ảnh trên S3 bằng full URL (bất đồng bộ, không chặn response)
+    if (photo?.image_url) {
+      this.s3Service.deleteByUrl(photo.image_url).catch((err) => {
+        this.logger.error(
+          `Không thể xóa ảnh S3 của giảng viên ${lecturer_code}: ${photo.image_url}`,
+          err,
+        );
+      });
+    }
+
     return {
-      message: "Xóa giảng viên thành công"
+      message: "Xóa giảng viên thành công",
     };
   }
   async importFromExcel(fileBuffer: Buffer, create_account: boolean = false) {

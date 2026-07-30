@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Delete, Param, Body, UseGuards } from '@nestjs/common';
 import { LecturerPhotosService } from './lecturer-photos.service';
 import { GenerateLecturerUploadUrlDto } from './dto/generate-upload-url.dto';
 import { ConfirmLecturerUploadDto } from './dto/confirm-upload.dto';
@@ -21,4 +21,10 @@ export class LecturerPhotosController {
   confirmUploads(@Body() dto: ConfirmLecturerUploadDto) {
     return this.lecturerPhotosService.confirmUploads(dto.uploads);
   }
+
+  @Delete(':lecturer_code')
+  deletePhoto(@Param('lecturer_code') lecturer_code: string) {
+    return this.lecturerPhotosService.deletePhoto(lecturer_code);
+  }
 }
+

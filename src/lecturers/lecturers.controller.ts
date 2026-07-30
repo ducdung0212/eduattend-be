@@ -23,9 +23,11 @@ export class LecturersController {
     @Query('search') search?: string,
     @Query('faculty_code') faculty_code?: string,
     @Query('page') page?: string,
-    @Query('limit') limit?: string
+    @Query('limit') limit?: string,
+    @Query('is_has_photo') is_has_photo?: string,
   ) {
-    return this.lecturersService.findAll({ search, faculty_code, page: page ? +page : undefined, limit: limit ? +limit : undefined });
+    const isHasPhoto = is_has_photo === 'true' ? true : is_has_photo === 'false' ? false : undefined;
+    return this.lecturersService.findAll({ search, faculty_code, page: page ? +page : undefined, limit: limit ? +limit : undefined, is_has_photo: isHasPhoto });
   }
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
