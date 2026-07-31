@@ -94,4 +94,9 @@ export class AttendanceRecordsController {
   remove(@Param('id') id: string) {
     return this.attendanceRecordsService.remove(id);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.attendanceRecordsService.removeMultiple(ids);
+  }
 }

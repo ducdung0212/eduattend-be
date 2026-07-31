@@ -71,5 +71,8 @@ export class LecturersController {
     return this.lecturersService.remove(lecturer_code);
   }
 
-
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.lecturersService.removeMultiple(ids);
+  }
 }

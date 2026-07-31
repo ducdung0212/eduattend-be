@@ -315,14 +315,16 @@ export class AttendanceRecordsService {
       ...(exam_schedule_id ? { exam_schedule_id } : {}),
       ...(status ? { status } : {}),
       ...(search ? {
-        student: {
-          OR: [
-            { student_code: { contains: search, mode: 'insensitive' } },
-            { first_name: { contains: search, mode: 'insensitive' } },
-            { last_name: { contains: search, mode: 'insensitive' } },
-            { class_code: { contains: search, mode: 'insensitive' } },
-          ]
-        }
+        AND: search.split(/\s+/).filter(Boolean).map(term => ({
+          student: {
+            OR: [
+              { student_code: { contains: term, mode: 'insensitive' } },
+              { first_name: { contains: term, mode: 'insensitive' } },
+              { last_name: { contains: term, mode: 'insensitive' } },
+              { class_code: { contains: term, mode: 'insensitive' } },
+            ]
+          }
+        }))
       } : {})
     };
 
@@ -507,6 +509,27 @@ export class AttendanceRecordsService {
         success,
         failed,
       }
+    };
+  }
+
+  async removeMultiple(ids: string[]) {
+    let success = 0;
+    let failed = 0;
+    const errors: any[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.remove(id);
+        success++;
+      } catch (error: any) {
+        failed++;
+        errors.push({ id, error: error.message });
+      }
+    }
+
+    return {
+      message: `Đã xoá thành công ${success} bản ghi điểm danh, thất bại ${failed} bản ghi.`,
+      data: { success, failed, errors }
     };
   }
 }

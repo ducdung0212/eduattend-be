@@ -250,4 +250,25 @@ export class ClassesService {
     };
 
   }
+
+  async removeMultiple(ids: string[]) {
+    let success = 0;
+    let failed = 0;
+    const errors: any[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.remove(id);
+        success++;
+      } catch (error: any) {
+        failed++;
+        errors.push({ id, error: error.message });
+      }
+    }
+
+    return {
+      message: `Đã xoá thành công ${success} lớp, thất bại ${failed} lớp.`,
+      data: { success, failed, errors }
+    };
+  }
 }

@@ -44,4 +44,9 @@ export class FacultiesController {
   remove(@Param('faculty_code') faculty_code: string) {
     return this.facultiesService.remove(faculty_code);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.facultiesService.removeMultiple(ids);
+  }
 }

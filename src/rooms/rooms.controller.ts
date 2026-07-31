@@ -67,4 +67,9 @@ export class RoomsController {
   remove(@Param('room_code') room_code: string) {
     return this.roomsService.remove(room_code);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.roomsService.removeMultiple(ids);
+  }
 }

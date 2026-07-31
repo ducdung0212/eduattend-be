@@ -98,4 +98,9 @@ export class ExamSchedulesController {
   remove(@Param('id') id: string) {
     return this.examSchedulesService.remove(id);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.examSchedulesService.removeMultiple(ids);
+  }
 }

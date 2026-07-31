@@ -26,5 +26,10 @@ export class LecturerPhotosController {
   deletePhoto(@Param('lecturer_code') lecturer_code: string) {
     return this.lecturerPhotosService.deletePhoto(lecturer_code);
   }
+
+  @Post('bulk-delete')
+  deletePhotosMultiple(@Body('ids') ids: string[]) {
+    return this.lecturerPhotosService.deletePhotosMultiple(ids);
+  }
 }
 

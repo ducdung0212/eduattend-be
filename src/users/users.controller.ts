@@ -49,6 +49,11 @@ export class UsersController {
     return this.usersService.remove(id);
   }
 
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.usersService.removeMultiple(ids);
+  }
+
   // @Post('import')
   // @UseInterceptors(FileInterceptor('file'))
   // async importUsers(@UploadedFile() file: Express.Multer.File) {

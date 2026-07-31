@@ -132,4 +132,25 @@ export class FacultiesService {
       message: 'Xóa khoa thành công'
     };
   }
+
+  async removeMultiple(ids: string[]) {
+    let success = 0;
+    let failed = 0;
+    const errors: any[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.remove(id);
+        success++;
+      } catch (error: any) {
+        failed++;
+        errors.push({ id, error: error.message });
+      }
+    }
+
+    return {
+      message: `Đã xoá thành công ${success} khoa, thất bại ${failed} khoa.`,
+      data: { success, failed, errors }
+    };
+  }
 }

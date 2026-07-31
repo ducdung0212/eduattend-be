@@ -78,4 +78,9 @@ export class StudentsController {
   remove(@Param('student_code') student_code: string) {
     return this.studentsService.remove(student_code);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.studentsService.removeMultiple(ids);
+  }
 }

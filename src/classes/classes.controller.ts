@@ -62,4 +62,9 @@ export class ClassesController {
   remove(@Param('class_code') class_code: string) {
     return this.classesService.remove(class_code);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.classesService.removeMultiple(ids);
+  }
 }

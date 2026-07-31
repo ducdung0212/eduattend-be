@@ -53,4 +53,9 @@ export class ExamSupervisorsController {
   remove(@Param('id') id: string) {
     return this.examSupervisorsService.remove(id);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.examSupervisorsService.removeMultiple(ids);
+  }
 }

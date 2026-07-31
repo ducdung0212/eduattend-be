@@ -44,4 +44,9 @@ export class ExamPeriodsController {
     remove(@Param('id') id: string) {
         return this.examPeriodsService.remove(id);
     }
+
+    @Post('bulk-delete')
+    removeMultiple(@Body('ids') ids: string[]) {
+        return this.examPeriodsService.removeMultiple(ids);
+    }
 }

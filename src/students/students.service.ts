@@ -156,15 +156,17 @@ export class StudentsService {
       ...(is_has_photo === true ? { photos: { some: {} } } : is_has_photo === false ? { photos: { none: {} } } : {}),
       ...(faculty_code ? { class: { faculty_code } } : {}),
       ...(search ? {
-        OR: [
-          { student_code: { contains: search, mode: 'insensitive' } },
-          { last_name: { contains: search, mode: 'insensitive' } },
-          { first_name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } },
-          { class_code: { contains: search, mode: 'insensitive' } },
-          { class: { name: { contains: search, mode: 'insensitive' } } }
-        ]
+        AND: search.split(/\s+/).filter(Boolean).map(term => ({
+          OR: [
+            { student_code: { contains: term, mode: 'insensitive' } },
+            { last_name: { contains: term, mode: 'insensitive' } },
+            { first_name: { contains: term, mode: 'insensitive' } },
+            { email: { contains: term, mode: 'insensitive' } },
+            { phone: { contains: term, mode: 'insensitive' } },
+            { class_code: { contains: term, mode: 'insensitive' } },
+            { class: { name: { contains: term, mode: 'insensitive' } } }
+          ]
+        }))
       } : {})
     };
 
@@ -528,6 +530,27 @@ export class StudentsService {
       errorMessages: formattedErrors,
       rawErrors: allErrors,
     },
+  };
+}
+
+async removeMultiple(ids: string[]) {
+  let success = 0;
+  let failed = 0;
+  const errors: any[] = [];
+
+  for (const id of ids) {
+    try {
+      await this.remove(id);
+      success++;
+    } catch (error: any) {
+      failed++;
+      errors.push({ id, error: error.message });
+    }
+  }
+
+  return {
+    message: `Đã xoá thành công ${success} sinh viên, thất bại ${failed} sinh viên.`,
+    data: { success, failed, errors }
   };
 }
 }

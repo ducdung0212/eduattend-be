@@ -134,15 +134,17 @@ export class LecturersService {
       ...(faculty_code ? { faculty_code } : {}),
       ...(is_has_photo === true ? { photos: { some: {} } } : is_has_photo === false ? { photos: { none: {} } } : {}),
       ...(search ? {
-        OR: [
-          { lecturer_code: { contains: search, mode: 'insensitive' } },
-          { last_name: { contains: search, mode: 'insensitive' } },
-          { first_name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } },
-          { faculty_code: { contains: search, mode: 'insensitive' } },
-          { faculty: { name: { contains: search, mode: 'insensitive' } } }
-        ]
+        AND: search.split(/\s+/).filter(Boolean).map(term => ({
+          OR: [
+            { lecturer_code: { contains: term, mode: 'insensitive' } },
+            { last_name: { contains: term, mode: 'insensitive' } },
+            { first_name: { contains: term, mode: 'insensitive' } },
+            { email: { contains: term, mode: 'insensitive' } },
+            { phone: { contains: term, mode: 'insensitive' } },
+            { faculty_code: { contains: term, mode: 'insensitive' } },
+            { faculty: { name: { contains: term, mode: 'insensitive' } } }
+          ]
+        }))
       } : {})
     };
 
@@ -515,4 +517,25 @@ export class LecturersService {
     },
   };
 }
+
+  async removeMultiple(ids: string[]) {
+    let success = 0;
+    let failed = 0;
+    const errors: any[] = [];
+
+    for (const id of ids) {
+      try {
+        await this.remove(id);
+        success++;
+      } catch (error: any) {
+        failed++;
+        errors.push({ id, error: error.message });
+      }
+    }
+
+    return {
+      message: `Đã xoá thành công ${success} giảng viên, thất bại ${failed} giảng viên.`,
+      data: { success, failed, errors }
+    };
+  }
 }

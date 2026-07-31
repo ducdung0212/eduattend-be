@@ -62,4 +62,9 @@ export class SubjectsController {
   remove(@Param('subject_code') subject_code: string) {
     return this.subjectsService.remove(subject_code);
   }
+
+  @Post('bulk-delete')
+  removeMultiple(@Body('ids') ids: string[]) {
+    return this.subjectsService.removeMultiple(ids);
+  }
 }

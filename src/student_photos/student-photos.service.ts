@@ -211,4 +211,29 @@ export class StudentPhotosService {
 
         return { message: 'Xóa ảnh sinh viên thành công' };
     }
+
+    async deletePhotosMultiple(ids: string[]) {
+        let success = 0;
+        let failed = 0;
+        const errors: any[] = [];
+
+        for (const id of ids) {
+            try {
+                const res = await this.deletePhoto(id);
+                if (res.message === 'Sinh viên này chưa có ảnh') {
+                    // Cân nhắc xem chưa có ảnh thì là lỗi hay là success. Ta cho là thành công vì state cuối là ko có ảnh.
+                    // Nhưng tuỳ nghiệp vụ. Ta coi là success.
+                }
+                success++;
+            } catch (error: any) {
+                failed++;
+                errors.push({ id, error: error.message });
+            }
+        }
+
+        return {
+            message: `Đã xoá thành công ảnh của ${success} sinh viên, thất bại ${failed} sinh viên.`,
+            data: { success, failed, errors }
+        };
+    }
 }
