@@ -17,8 +17,8 @@ const LECTURER_SELECT: Prisma.LecturerSelect = {
   faculty_code: true,
   created_at: true,
   updated_at: true,
-  user_id: true, 
-  user: {        
+  user_id: true,
+  user: {
     select: {
       id: true,
       email: true,
@@ -111,9 +111,9 @@ export class LecturersService {
       select: LECTURER_SELECT,
     });
 
-    return { 
+    return {
       message: 'Tạo giảng viên thành công',
-      data: lecturer 
+      data: lecturer
     };
   }
 
@@ -247,276 +247,330 @@ export class LecturersService {
     };
   }
   async importFromExcel(fileBuffer: Buffer, create_account: boolean = false) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(fileBuffer as any);
-  const worksheet = workbook.worksheets[0];
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(fileBuffer as any);
+    const worksheet = workbook.worksheets[0];
 
-  // ── Helper đọc cell an toàn ───────────────────────────────────────────
-  const getCellValue = (cell: ExcelJS.Cell): string => {
-    const val = cell.value;
-    if (val && typeof val === 'object') {
-      if ('text' in val) return String((val as any).text);
-      if ('richText' in val) return (val as any).richText.map((rt: any) => rt.text).join('');
-    }
-    return val ? String(val) : '';
-  };
-
-  // ── Bước 1: Đọc và validate cơ bản từng row ──────────────────────────
-  // Cột Excel: lecturer_code | last_name | first_name | email | phone | faculty_code
-  const errorRows: { row: number; error: string }[] = [];
-  const rawRows: {
-    rowNum: number;
-    lecturer_code: string;
-    last_name: string;
-    first_name: string;
-    email: string;
-    phone: string | null;
-    faculty_code: string;
-  }[] = [];
-
-  const seenCodes = new Set<string>();
-  const seenEmails = new Set<string>();
-  const seenPhones = new Set<string>();
-
-  for (let i = 2; i <= worksheet.rowCount; i++) {
-    const row = worksheet.getRow(i);
-    if (!row.values || (row.values as any[]).length === 0) continue;
-
-    const lecturer_code = getCellValue(row.getCell(1)).trim();
-    const last_name     = getCellValue(row.getCell(2)).trim();
-    const first_name    = getCellValue(row.getCell(3)).trim();
-    const email         = getCellValue(row.getCell(4)).trim().toLowerCase();
-    const faculty_code  = getCellValue(row.getCell(5)).trim();
-    const phone         = getCellValue(row.getCell(6)).trim() || null;
-
-    if (!lecturer_code || !last_name || !first_name || !email || !faculty_code) {
-      errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã GV, họ, tên, email, mã khoa)' });
-      continue;
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errorRows.push({ row: i, error: `Email '${email}' không đúng định dạng` });
-      continue;
-    }
-
-    if (seenCodes.has(lecturer_code)) {
-      errorRows.push({ row: i, error: `Mã giảng viên '${lecturer_code}' bị trùng trong file` });
-      continue;
-    }
-    if (seenEmails.has(email)) {
-      errorRows.push({ row: i, error: `Email '${email}' bị trùng trong file` });
-      continue;
-    }
-    if (phone && seenPhones.has(phone)) {
-      errorRows.push({ row: i, error: `Số điện thoại '${phone}' bị trùng trong file` });
-      continue;
-    }
-
-    seenCodes.add(lecturer_code);
-    seenEmails.add(email);
-    if (phone) seenPhones.add(phone);
-
-    rawRows.push({ rowNum: i, lecturer_code, last_name, first_name, email, phone, faculty_code });
-  }
-
-  if (rawRows.length === 0) {
-    return {
-      message: 'Không có dữ liệu hợp lệ để import',
-      data: { successCount: 0, errorCount: errorRows.length, rawErrors: errorRows },
+    // ── Helper đọc cell an toàn ───────────────────────────────────────────
+    const getCellValue = (cell: ExcelJS.Cell): string => {
+      const val = cell.value;
+      if (val && typeof val === 'object') {
+        if ('text' in val) return String((val as any).text);
+        if ('richText' in val) return (val as any).richText.map((rt: any) => rt.text).join('');
+      }
+      return val ? String(val) : '';
     };
-  }
 
-  // ── Bước 2: Batch-check DB — 1 lần duy nhất ──────────────────────────
-  const allCodes    = rawRows.map(r => r.lecturer_code);
-  const allEmails   = rawRows.map(r => r.email);
-  const allPhones   = rawRows.filter(r => r.phone).map(r => r.phone as string);
-  const allFaculties = [...new Set(rawRows.map(r => r.faculty_code))];
+    // ── Bước 1: Đọc và validate cơ bản từng row ──────────────────────────
+    // Cột Excel: lecturer_code | last_name | first_name | email | phone | faculty_code
+    const errorRows: { row: number; error: string }[] = [];
+    const rawRows: {
+      rowNum: number;
+      lecturer_code: string;
+      last_name: string;
+      first_name: string;
+      email: string;
+      phone: string | null;
+      faculty_code: string;
+    }[] = [];
 
-  const [
-    existingLecturerCodes,
-    existingLecturerEmails,
-    existingLecturerPhones,
-    validFaculties,
-    existingUsers,
-  ] = await Promise.all([
-    this.prisma.lecturer.findMany({
-      where: { lecturer_code: { in: allCodes } },
-      select: { lecturer_code: true },
-    }),
-    this.prisma.lecturer.findMany({
-      where: { email: { in: allEmails } },
-      select: { email: true },
-    }),
-    allPhones.length > 0
-      ? this.prisma.lecturer.findMany({
+    const seenCodes = new Set<string>();
+    const seenEmails = new Set<string>();
+    const seenPhones = new Set<string>();
+
+    for (let i = 2; i <= worksheet.rowCount; i++) {
+      const row = worksheet.getRow(i);
+      if (!row.values || (row.values as any[]).length === 0) continue;
+
+      const lecturer_code = getCellValue(row.getCell(1)).trim();
+      const last_name = getCellValue(row.getCell(2)).trim();
+      const first_name = getCellValue(row.getCell(3)).trim();
+      const email = getCellValue(row.getCell(4)).trim().toLowerCase();
+      const faculty_code = getCellValue(row.getCell(5)).trim();
+      const phone = getCellValue(row.getCell(6)).trim() || null;
+
+      if (!lecturer_code || !last_name || !first_name || !email || !faculty_code) {
+        errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã GV, họ, tên, email, mã khoa)' });
+        continue;
+      }
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errorRows.push({ row: i, error: `Email '${email}' không đúng định dạng` });
+        continue;
+      }
+
+      if (seenCodes.has(lecturer_code)) {
+        errorRows.push({ row: i, error: `Mã giảng viên '${lecturer_code}' bị trùng trong file` });
+        continue;
+      }
+      if (seenEmails.has(email)) {
+        errorRows.push({ row: i, error: `Email '${email}' bị trùng trong file` });
+        continue;
+      }
+      if (phone && seenPhones.has(phone)) {
+        errorRows.push({ row: i, error: `Số điện thoại '${phone}' bị trùng trong file` });
+        continue;
+      }
+
+      seenCodes.add(lecturer_code);
+      seenEmails.add(email);
+      if (phone) seenPhones.add(phone);
+
+      rawRows.push({ rowNum: i, lecturer_code, last_name, first_name, email, phone, faculty_code });
+    }
+
+    if (rawRows.length === 0) {
+      return {
+        message: 'Không có dữ liệu hợp lệ để import',
+        data: { successCount: 0, errorCount: errorRows.length, rawErrors: errorRows },
+      };
+    }
+
+    // ── Bước 2: Batch-check DB — 1 lần duy nhất ──────────────────────────
+    const allCodes = rawRows.map(r => r.lecturer_code);
+    const allEmails = rawRows.map(r => r.email);
+    const allPhones = rawRows.filter(r => r.phone).map(r => r.phone as string);
+    const allFaculties = [...new Set(rawRows.map(r => r.faculty_code))];
+
+    const [
+      existingLecturerCodes,
+      existingLecturerEmails,
+      existingLecturerPhones,
+      validFaculties,
+      existingUsers,
+    ] = await Promise.all([
+      this.prisma.lecturer.findMany({
+        where: { lecturer_code: { in: allCodes } },
+        select: { lecturer_code: true },
+      }),
+      this.prisma.lecturer.findMany({
+        where: { email: { in: allEmails } },
+        select: { email: true },
+      }),
+      allPhones.length > 0
+        ? this.prisma.lecturer.findMany({
           where: { phone: { in: allPhones } },
           select: { phone: true },
         })
-      : Promise.resolve([]),
-    this.prisma.faculty.findMany({
-      where: { faculty_code: { in: allFaculties } },
-      select: { faculty_code: true },
-    }),
-    this.prisma.user.findMany({
-      where: { email: { in: allEmails } },
-      select: { id: true, email: true },
-    }),
-  ]);
+        : Promise.resolve([]),
+      this.prisma.faculty.findMany({
+        where: { faculty_code: { in: allFaculties } },
+        select: { faculty_code: true },
+      }),
+      this.prisma.user.findMany({
+        where: { email: { in: allEmails } },
+        select: { id: true, email: true },
+      }),
+    ]);
 
-  const existingCodeSet  = new Set(existingLecturerCodes.map(l => l.lecturer_code));
-  const existingEmailSet = new Set(existingLecturerEmails.map(l => l.email.toLowerCase()));
-  const existingPhoneSet = new Set(existingLecturerPhones.map(l => l.phone as string));
-  const validFacultySet  = new Set(validFaculties.map(f => f.faculty_code));
-  const existingUserMap  = new Map(existingUsers.map(u => [u.email.toLowerCase(), u.id]));
+    const existingCodeSet = new Set(existingLecturerCodes.map(l => l.lecturer_code));
+    const existingEmailSet = new Set(existingLecturerEmails.map(l => l.email.toLowerCase()));
+    const existingPhoneSet = new Set(existingLecturerPhones.map(l => l.phone as string));
+    const validFacultySet = new Set(validFaculties.map(f => f.faculty_code));
+    const existingUserMap = new Map(existingUsers.map(u => [u.email.toLowerCase(), u.id]));
 
-  // ── Bước 3: Validate từng row với dữ liệu DB ─────────────────────────
-  const validRows = rawRows.filter(row => {
-    if (existingCodeSet.has(row.lecturer_code)) {
-      errorRows.push({ row: row.rowNum, error: `Mã giảng viên '${row.lecturer_code}' đã tồn tại` });
-      return false;
-    }
-    if (existingEmailSet.has(row.email)) {
-      errorRows.push({ row: row.rowNum, error: `Email '${row.email}' đã tồn tại trong hệ thống` });
-      return false;
-    }
-    if (row.phone && existingPhoneSet.has(row.phone)) {
-      errorRows.push({ row: row.rowNum, error: `Số điện thoại '${row.phone}' đã tồn tại` });
-      return false;
-    }
-    if (!validFacultySet.has(row.faculty_code)) {
-      errorRows.push({ row: row.rowNum, error: `Mã khoa '${row.faculty_code}' không tồn tại` });
-      return false;
-    }
-    return true;
-  });
+    // ── Bước 3: Validate từng row với dữ liệu DB ─────────────────────────
+    const validRows = rawRows.filter(row => {
+      if (existingCodeSet.has(row.lecturer_code)) {
+        errorRows.push({ row: row.rowNum, error: `Mã giảng viên '${row.lecturer_code}' đã tồn tại` });
+        return false;
+      }
+      if (existingEmailSet.has(row.email)) {
+        errorRows.push({ row: row.rowNum, error: `Email '${row.email}' đã tồn tại trong hệ thống` });
+        return false;
+      }
+      if (row.phone && existingPhoneSet.has(row.phone)) {
+        errorRows.push({ row: row.rowNum, error: `Số điện thoại '${row.phone}' đã tồn tại` });
+        return false;
+      }
+      if (!validFacultySet.has(row.faculty_code)) {
+        errorRows.push({ row: row.rowNum, error: `Mã khoa '${row.faculty_code}' không tồn tại` });
+        return false;
+      }
+      return true;
+    });
 
-  if (validRows.length === 0) {
-    errorRows.sort((a, b) => a.row - b.row);
+    if (validRows.length === 0) {
+      errorRows.sort((a, b) => a.row - b.row);
+      return {
+        message: `Import hoàn tất với một số lỗi. Thành công: 0 dòng. Thất bại: ${errorRows.length} dòng.`,
+        data: {
+          successCount: 0,
+          errorCount: errorRows.length,
+          errorMessages: errorRows.map(e => `Dòng ${e.row}: ${e.error}`),
+          rawErrors: errorRows,
+        },
+      };
+    }
+
+    // ── Bước 4: Hash mật khẩu với giới hạn concurrency (tránh block event loop) ──
+    type ValidRowWithHash = (typeof validRows)[number] & { hashedPassword: string | null };
+
+    const rowsWithHash: ValidRowWithHash[] = [];
+    if (create_account) {
+      const HASH_BATCH = 10;
+      for (let i = 0; i < validRows.length; i += HASH_BATCH) {
+        const batch = validRows.slice(i, i + HASH_BATCH);
+        const hashed = await Promise.all(
+          batch.map(async (row) => ({
+            ...row,
+            hashedPassword: await bcrypt.hash(row.email.split('@')[0], 10),
+          }))
+        );
+        rowsWithHash.push(...hashed);
+      }
+    } else {
+      rowsWithHash.push(...validRows.map(row => ({ ...row, hashedPassword: null })));
+    }
+
+    // ── Bước 5: Insert theo batch ─────────────────────────────────────────
+    const dbErrorRows: { row: number; error: string }[] = [];
+    let successCount = 0;
+
+    // Giới hạn mỗi batch 500 dòng để tránh vượt PostgreSQL parameter limit (32,767)
+    // 500 dòng × ~7 cột = 3,500 params/batch — an toàn
+    const DB_BATCH_SIZE = 500;
+
+    if (!create_account) {
+      // ── Không tạo tài khoản: createMany theo batch ───────────────────
+      for (let i = 0; i < rowsWithHash.length; i += DB_BATCH_SIZE) {
+        const batch = rowsWithHash.slice(i, i + DB_BATCH_SIZE);
+        try {
+          const result = await this.prisma.lecturer.createMany({
+            data: batch.map(({ rowNum, hashedPassword, ...data }) => data),
+            skipDuplicates: true,
+          });
+          successCount += result.count;
+
+          if (result.count < batch.length) {
+            dbErrorRows.push({
+              row: -1,
+              error: `${batch.length - result.count} dòng bị bỏ qua do trùng dữ liệu (batch ${Math.floor(i / DB_BATCH_SIZE) + 1})`,
+            });
+          }
+        } catch {
+          // Fallback: xử lý tuần tự từng dòng trong batch lỗi
+          for (const row of batch) {
+            try {
+              const { rowNum, hashedPassword, ...data } = row;
+              await this.prisma.lecturer.create({ data });
+              successCount++;
+            } catch {
+              dbErrorRows.push({ row: row.rowNum, error: 'Lỗi khi lưu vào database' });
+            }
+          }
+        }
+      }
+    } else {
+      // ── Tạo tài khoản: mỗi batch 500 dòng trong 1 transaction ───────
+      for (let i = 0; i < rowsWithHash.length; i += DB_BATCH_SIZE) {
+        const batch = rowsWithHash.slice(i, i + DB_BATCH_SIZE);
+        const batchNum = Math.floor(i / DB_BATCH_SIZE) + 1;
+
+        try {
+          const result = await this.prisma.$transaction(async (tx) => {
+            // 1. Bulk tạo user mới trong batch
+            const rowsNeedNewUser = batch.filter(r => !existingUserMap.has(r.email));
+
+            if (rowsNeedNewUser.length > 0) {
+              await tx.user.createMany({
+                data: rowsNeedNewUser.map(row => ({
+                  name: `${row.last_name} ${row.first_name}`,
+                  email: row.email,
+                  password: row.hashedPassword!,
+                  role: 'lecturer' as const,
+                })),
+                skipDuplicates: true,
+              });
+            }
+
+            // 2. Lấy ID user (cả cũ lẫn mới) trong batch
+            const batchEmails = batch.map(r => r.email);
+            const users = await tx.user.findMany({
+              where: { email: { in: batchEmails } },
+              select: { id: true, email: true },
+            });
+            const batchUserIdMap = new Map(users.map(u => [u.email.toLowerCase(), u.id]));
+
+            // 3. Bulk tạo lecturer trong batch
+            const lecturerCreateData = batch.map(row => {
+              const { rowNum, hashedPassword, ...data } = row;
+              const userId = batchUserIdMap.get(row.email.toLowerCase()) ?? null;
+              return { ...data, user_id: userId };
+            });
+
+            return tx.lecturer.createMany({
+              data: lecturerCreateData,
+              skipDuplicates: true,
+            });
+          }, {
+            timeout: 30000, // 30s timeout cho mỗi batch
+          });
+
+          successCount += result.count;
+
+          if (result.count < batch.length) {
+            dbErrorRows.push({
+              row: -1,
+              error: `${batch.length - result.count} dòng bị bỏ qua do trùng dữ liệu (batch ${batchNum})`,
+            });
+          }
+        } catch (txError) {
+          // Fallback: nếu transaction batch thất bại, xử lý tuần tự
+          this.logger.error(`Batch ${batchNum} transaction failed, falling back to sequential`, txError);
+
+          for (const row of batch) {
+            try {
+              const { rowNum, hashedPassword, ...lecturerData } = row;
+              const existingUserId = existingUserMap.get(row.email);
+
+              if (existingUserId) {
+                await this.prisma.lecturer.create({
+                  data: { ...lecturerData, user_id: existingUserId },
+                });
+              } else {
+                await this.prisma.$transaction(async (tx) => {
+                  const user = await tx.user.create({
+                    data: {
+                      name: `${row.last_name} ${row.first_name}`,
+                      email: row.email,
+                      password: hashedPassword!,
+                      role: 'lecturer',
+                    },
+                  });
+                  await tx.lecturer.create({
+                    data: { ...lecturerData, user_id: user.id },
+                  });
+                });
+              }
+              successCount++;
+            } catch {
+              dbErrorRows.push({ row: row.rowNum, error: 'Lỗi khi lưu vào database' });
+            }
+          }
+        }
+      }
+    }
+
+    // ── Xử lý và format lỗi trước khi trả về ─────────────────────────────
+    const allErrors = [...errorRows, ...dbErrorRows].sort((a, b) => a.row - b.row);
+    const formattedErrors = allErrors.map(err =>
+      err.row === -1 ? err.error : `Dòng ${err.row}: ${err.error}`
+    );
+
     return {
-      message: `Import hoàn tất với một số lỗi. Thành công: 0 dòng. Thất bại: ${errorRows.length} dòng.`,
+      message:
+        allErrors.length > 0
+          ? `Import hoàn tất với một số lỗi. Thành công: ${successCount} dòng. Thất bại: ${allErrors.length} dòng.`
+          : `Import thành công toàn bộ ${successCount} dòng!`,
       data: {
-        successCount: 0,
-        errorCount: errorRows.length,
-        errorMessages: errorRows.map(e => `Dòng ${e.row}: ${e.error}`),
-        rawErrors: errorRows,
+        successCount,
+        errorCount: allErrors.length,
+        errorMessages: formattedErrors,
+        rawErrors: allErrors,
       },
     };
   }
-
-  // ── Bước 4: Pre-hash password song song (chỉ khi create_account) ─────
-  type ValidRowWithHash = (typeof validRows)[number] & { hashedPassword: string | null };
-
-  const rowsWithHash: ValidRowWithHash[] = await Promise.all(
-    validRows.map(async (row) => ({
-      ...row,
-      hashedPassword: create_account
-        ? await bcrypt.hash(row.email.split('@')[0], 10)
-        : null,
-    }))
-  );
-
-  // ── Bước 5: Tách thành 2 nhóm để bulk insert khi có thể ──────────────
-  const dbErrorRows: { row: number; error: string }[] = [];
-  let successCount = 0;
-
-  if (!create_account) {
-    // Không cần account → bulk insert toàn bộ
-    try {
-      const result = await this.prisma.lecturer.createMany({
-        data: rowsWithHash.map(({ rowNum, hashedPassword, ...data }) => data),
-        skipDuplicates: true,
-      });
-      successCount = result.count;
-
-      // Nếu count < validRows.length tức có row bị skip do race condition
-      if (result.count < rowsWithHash.length) {
-        dbErrorRows.push({
-          row: -1,
-          error: `${rowsWithHash.length - result.count} dòng bị bỏ qua do trùng dữ liệu tại thời điểm insert`,
-        });
-      }
-    } catch {
-      // Nếu bulk insert thất bại hoàn toàn → fallback từng row để xác định dòng lỗi
-      const BATCH_SIZE = 100;
-      for (let i = 0; i < rowsWithHash.length; i += BATCH_SIZE) {
-        const batch = rowsWithHash.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-          batch.map(({ rowNum, hashedPassword, ...data }) =>
-            this.prisma.lecturer.create({ data })
-          )
-        );
-        results.forEach((result, idx) => {
-          if (result.status === 'fulfilled') {
-            successCount++;
-          } else {
-            dbErrorRows.push({ row: batch[idx].rowNum, error: 'Lỗi khi lưu vào database' });
-          }
-        });
-      }
-    }
-  } else {
-    // Cần tạo account → xử lý song song từng batch (không thể bulk vì cần transaction)
-    const BATCH_SIZE = 100;
-    for (let i = 0; i < rowsWithHash.length; i += BATCH_SIZE) {
-      const batch = rowsWithHash.slice(i, i + BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map(async (row) => {
-          const { rowNum, hashedPassword, ...lecturerData } = row;
-          const existingUserId = existingUserMap.get(row.email);
-
-          if (existingUserId) {
-            // User đã tồn tại → chỉ tạo lecturer và link vào
-            await this.prisma.lecturer.create({
-              data: { ...lecturerData, user_id: existingUserId },
-            });
-          } else {
-            // Chưa có user → tạo cả hai trong transaction
-            await this.prisma.$transaction(async (tx) => {
-              const user = await tx.user.create({
-                data: {
-                  name: `${row.last_name} ${row.first_name}`,
-                  email: row.email,
-                  password: hashedPassword!,
-                  role: 'lecturer',
-                },
-              });
-              await tx.lecturer.create({
-                data: { ...lecturerData, user_id: user.id },
-              });
-            });
-          }
-        })
-      );
-
-      results.forEach((result, idx) => {
-        if (result.status === 'fulfilled') {
-          successCount++;
-        } else {
-          dbErrorRows.push({ row: batch[idx].rowNum, error: 'Lỗi khi lưu vào database' });
-        }
-      });
-    }
-  }
-
-  // ── Xử lý và format lỗi trước khi trả về ─────────────────────────────
-  const allErrors = [...errorRows, ...dbErrorRows].sort((a, b) => a.row - b.row);
-  const formattedErrors = allErrors.map(err =>
-    err.row === -1 ? err.error : `Dòng ${err.row}: ${err.error}`
-  );
-
-  return {
-    message:
-      allErrors.length > 0
-        ? `Import hoàn tất với một số lỗi. Thành công: ${successCount} dòng. Thất bại: ${allErrors.length} dòng.`
-        : `Import thành công toàn bộ ${successCount} dòng!`,
-    data: {
-      successCount,
-      errorCount: allErrors.length,
-      errorMessages: formattedErrors,
-      rawErrors: allErrors,
-    },
-  };
-}
 
   async removeMultiple(ids: string[]) {
     let success = 0;

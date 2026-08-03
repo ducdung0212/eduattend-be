@@ -27,7 +27,7 @@ const STUDENT_SELECT: Prisma.StudentSelect = {
   },
   class: {
     select: {
-      class_code:true,
+      class_code: true,
       name: true,
       faculty: {
         select: {
@@ -55,7 +55,7 @@ export class StudentsService {
 
   async create(createStudentDto: CreateStudentDto) {
     const { create_account, ...rest } = createStudentDto;
-    
+
     const studentData = {
       ...rest,
       email: rest.email || `${rest.student_code.toLowerCase()}@student.stu.edu.vn`
@@ -143,7 +143,7 @@ export class StudentsService {
     faculty_code?: string;
     page?: number;
     limit?: number;
-    is_has_photo?:boolean;
+    is_has_photo?: boolean;
   } = {}) {
     const { search, class_code, faculty_code, is_has_photo } = query;
     const page = Number(query.page) || 1;
@@ -425,132 +425,192 @@ export class StudentsService {
       };
     }
 
+    // ── Hash mật khẩu với giới hạn concurrency (tránh block event loop) ──
     type ValidRowWithHash = (typeof validRows)[number] & { hashedPassword: string | null };
 
-    const rowsWithHash: ValidRowWithHash[] = await Promise.all(
-      validRows.map(async (row) => ({
-        ...row,
-        hashedPassword: create_account
-          ? await bcrypt.hash(row.email.split('@')[0], 10)
-          : null,
-      }))
-    )
+    const rowsWithHash: ValidRowWithHash[] = [];
+    if (create_account) {
+      const HASH_BATCH = 10;
+      for (let i = 0; i < validRows.length; i += HASH_BATCH) {
+        const batch = validRows.slice(i, i + HASH_BATCH);
+        const hashed = await Promise.all(
+          batch.map(async (row) => ({
+            ...row,
+            hashedPassword: await bcrypt.hash(row.email.split('@')[0], 10),
+          }))
+        );
+        rowsWithHash.push(...hashed);
+      }
+    } else {
+      rowsWithHash.push(...validRows.map(row => ({ ...row, hashedPassword: null })));
+    }
 
     const dbErrorRows: { row: number; error: string }[] = [];
     let successCount = 0;
 
+    // Giới hạn mỗi batch 500 dòng để tránh vượt PostgreSQL parameter limit (32,767)
+    // 500 dòng × ~7 cột = 3,500 params/batch — an toàn
+    const DB_BATCH_SIZE = 500;
+
     if (!create_account) {
-      try {
-        const result = await this.prisma.student.createMany({
-          data: rowsWithHash.map(({ rowNum, hashedPassword, ...data }) => data),
-          skipDuplicates: true,
-        });
-        successCount = result.count;
-
-        if (result.count < rowsWithHash.length) {
-          dbErrorRows.push({
-            row: -1,
-            error: `${rowsWithHash.length - result.count} dòng bị bỏ qua do trùng dữ liệu tại thời điểm import`,
+      // ── Không tạo tài khoản: createMany theo batch ───────────────────
+      for (let i = 0; i < rowsWithHash.length; i += DB_BATCH_SIZE) {
+        const batch = rowsWithHash.slice(i, i + DB_BATCH_SIZE);
+        try {
+          const result = await this.prisma.student.createMany({
+            data: batch.map(({ rowNum, hashedPassword, ...data }) => data),
+            skipDuplicates: true,
           });
-        }
-      } catch {
-        const BATCH_SIZE = 100;
-        for (let i = 0; i < rowsWithHash.length; i += BATCH_SIZE) {
-          const batch = rowsWithHash.slice(i, i + BATCH_SIZE);
-          const results = await Promise.allSettled(
-            batch.map(({ rowNum, hashedPassword, ...data }) =>
-              this.prisma.student.create({ data })
-            )
-          );
-          results.forEach((result, idx) => {
-            if (result.status === 'fulfilled') {
-              successCount++;
-            } else {
-              dbErrorRows.push({ row: batch[idx].rowNum, error: 'Lỗi khi lưu vào database' });
-            }
-          });
-        }
-      }
-    } else{
-    const BATCH_SIZE = 100;
-    for (let i = 0; i < rowsWithHash.length; i += BATCH_SIZE) {
-      const batch = rowsWithHash.slice(i, i + BATCH_SIZE);
-      const results = await Promise.allSettled(
-        batch.map(async (row) => {
-          const { rowNum, hashedPassword, ...studentData } = row;
-          const existingUserId = existingUserMap.get(row.email);
+          successCount += result.count;
 
-          if (existingUserId) {
-            await this.prisma.student.create({
-              data: { ...studentData, user_id: existingUserId },
-            });
-          } else {
-            // Chưa có user → tạo cả hai trong transaction
-            await this.prisma.$transaction(async (tx) => {
-              const user = await tx.user.create({
-                data: {
-                  name: `${row.last_name} ${row.first_name}`,
-                  email: row.email,
-                  password: hashedPassword!,
-                  role: 'student',
-                },
-              });
-              await tx.student.create({
-                data: { ...studentData, user_id: user.id },
-              });
+          if (result.count < batch.length) {
+            dbErrorRows.push({
+              row: -1,
+              error: `${batch.length - result.count} dòng bị bỏ qua do trùng dữ liệu (batch ${Math.floor(i / DB_BATCH_SIZE) + 1})`,
             });
           }
-        })
-      );
-
-      results.forEach((result, idx) => {
-        if (result.status === 'fulfilled') {
-          successCount++;
-        } else {
-          dbErrorRows.push({ row: batch[idx].rowNum, error: 'Lỗi khi lưu vào database' });
+        } catch {
+          // Fallback: xử lý tuần tự từng dòng trong batch lỗi
+          for (const row of batch) {
+            try {
+              const { rowNum, hashedPassword, ...data } = row;
+              await this.prisma.student.create({ data });
+              successCount++;
+            } catch {
+              dbErrorRows.push({ row: row.rowNum, error: 'Lỗi khi lưu vào database' });
+            }
+          }
         }
-      });
+      }
+    } else {
+      // ── Tạo tài khoản: mỗi batch 500 dòng trong 1 transaction ───────
+      for (let i = 0; i < rowsWithHash.length; i += DB_BATCH_SIZE) {
+        const batch = rowsWithHash.slice(i, i + DB_BATCH_SIZE);
+        const batchNum = Math.floor(i / DB_BATCH_SIZE) + 1;
+
+        try {
+          const result = await this.prisma.$transaction(async (tx) => {
+            // 1. Bulk tạo user mới trong batch
+            const rowsNeedNewUser = batch.filter(r => !existingUserMap.has(r.email));
+
+            if (rowsNeedNewUser.length > 0) {
+              await tx.user.createMany({
+                data: rowsNeedNewUser.map(row => ({
+                  name: `${row.last_name} ${row.first_name}`,
+                  email: row.email,
+                  password: row.hashedPassword!,
+                  role: 'student' as const,
+                })),
+                skipDuplicates: true,
+              });
+            }
+
+            // 2. Lấy ID user (cả cũ lẫn mới) trong batch
+            const batchEmails = batch.map(r => r.email);
+            const users = await tx.user.findMany({
+              where: { email: { in: batchEmails } },
+              select: { id: true, email: true },
+            });
+            const batchUserIdMap = new Map(users.map(u => [u.email.toLowerCase(), u.id]));
+
+            // 3. Bulk tạo student trong batch
+            const studentCreateData = batch.map(row => {
+              const { rowNum, hashedPassword, ...data } = row;
+              const userId = batchUserIdMap.get(row.email.toLowerCase()) ?? null;
+              return { ...data, user_id: userId };
+            });
+
+            return tx.student.createMany({
+              data: studentCreateData,
+              skipDuplicates: true,
+            });
+          }, {
+            timeout: 30000, // 30s timeout cho mỗi batch
+          });
+
+          successCount += result.count;
+
+          if (result.count < batch.length) {
+            dbErrorRows.push({
+              row: -1,
+              error: `${batch.length - result.count} dòng bị bỏ qua do trùng dữ liệu (batch ${batchNum})`,
+            });
+          }
+        } catch (txError) {
+          // Fallback: nếu transaction batch thất bại, xử lý tuần tự
+          this.logger.error(`Batch ${batchNum} transaction failed, falling back to sequential`, txError);
+
+          for (const row of batch) {
+            try {
+              const { rowNum, hashedPassword, ...studentData } = row;
+              const existingUserId = existingUserMap.get(row.email);
+
+              if (existingUserId) {
+                await this.prisma.student.create({
+                  data: { ...studentData, user_id: existingUserId },
+                });
+              } else {
+                await this.prisma.$transaction(async (tx) => {
+                  const user = await tx.user.create({
+                    data: {
+                      name: `${row.last_name} ${row.first_name}`,
+                      email: row.email,
+                      password: hashedPassword!,
+                      role: 'student',
+                    },
+                  });
+                  await tx.student.create({
+                    data: { ...studentData, user_id: user.id },
+                  });
+                });
+              }
+              successCount++;
+            } catch {
+              dbErrorRows.push({ row: row.rowNum, error: 'Lỗi khi lưu vào database' });
+            }
+          }
+        }
+      }
     }
+
+    // ── Xử lý và format lỗi trước khi trả về ─────────────────────────────
+    const allErrors = [...errorRows, ...dbErrorRows].sort((a, b) => a.row - b.row);
+    const formattedErrors = allErrors.map(err =>
+      err.row === -1 ? err.error : `Dòng ${err.row}: ${err.error}`
+    );
+
+    return {
+      message:
+        allErrors.length > 0
+          ? `Import hoàn tất với một số lỗi. Thành công: ${successCount} dòng. Thất bại: ${allErrors.length} dòng.`
+          : `Import thành công toàn bộ ${successCount} dòng!`,
+      data: {
+        successCount,
+        errorCount: allErrors.length,
+        errorMessages: formattedErrors,
+        rawErrors: allErrors,
+      },
+    };
   }
 
-  // ── Xử lý và format lỗi trước khi trả về ─────────────────────────────
-  const allErrors = [...errorRows, ...dbErrorRows].sort((a, b) => a.row - b.row);
-  const formattedErrors = allErrors.map(err =>
-    err.row === -1 ? err.error : `Dòng ${err.row}: ${err.error}`
-  );
+  async removeMultiple(ids: string[]) {
+    let success = 0;
+    let failed = 0;
+    const errors: any[] = [];
 
-  return {
-    message:
-      allErrors.length > 0
-        ? `Import hoàn tất với một số lỗi. Thành công: ${successCount} dòng. Thất bại: ${allErrors.length} dòng.`
-        : `Import thành công toàn bộ ${successCount} dòng!`,
-    data: {
-      successCount,
-      errorCount: allErrors.length,
-      errorMessages: formattedErrors,
-      rawErrors: allErrors,
-    },
-  };
-}
-
-async removeMultiple(ids: string[]) {
-  let success = 0;
-  let failed = 0;
-  const errors: any[] = [];
-
-  for (const id of ids) {
-    try {
-      await this.remove(id);
-      success++;
-    } catch (error: any) {
-      failed++;
-      errors.push({ id, error: error.message });
+    for (const id of ids) {
+      try {
+        await this.remove(id);
+        success++;
+      } catch (error: any) {
+        failed++;
+        errors.push({ id, error: error.message });
+      }
     }
-  }
 
-  return {
-    message: `Đã xoá thành công ${success} sinh viên, thất bại ${failed} sinh viên.`,
-    data: { success, failed, errors }
-  };
-}
+    return {
+      message: `Đã xoá thành công ${success} sinh viên, thất bại ${failed} sinh viên.`,
+      data: { success, failed, errors }
+    };
+  }
 }
