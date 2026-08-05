@@ -9,6 +9,7 @@ import { CreateAttendanceRecordBulkDto } from './dto/create-attendance-record-bu
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import * as ExcelJS from 'exceljs';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -272,6 +273,27 @@ export class AttendanceRecordsService {
   }
 
   async create(createAttendanceRecordDto: CreateAttendanceRecordDto) {
+    const schedule = await this.prisma.examSchedule.findUnique({
+      where: { id: createAttendanceRecordDto.exam_schedule_id }
+    });
+    if (!schedule) {
+      throw new NotFoundException("Không tìm thấy ca thi");
+    }
+
+    const existingSubjectSemester = await this.prisma.attendanceRecord.findFirst({
+      where: {
+        student_code: createAttendanceRecordDto.student_code,
+        exam_schedule: {
+          subject_code: schedule.subject_code,
+          semester_id: schedule.semester_id,
+        }
+      }
+    });
+    
+    if (existingSubjectSemester) {
+      throw new ConflictException("Sinh viên đã có lịch thi môn này trong học kì hiện tại");
+    }
+
     const existingRecord = await this.prisma.attendanceRecord.findUnique({
       where: {
         student_code_exam_schedule_id: {
@@ -405,6 +427,19 @@ export class AttendanceRecordsService {
     });
     const validStudentCodes = new Set(students.map((s) => s.student_code));
 
+    // 3.5. Kiểm tra xem sinh viên đã có lịch thi môn này trong cùng học kì chưa
+    const existingSubjectSemesterRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        student_code: { in: Array.from(validStudentCodes) },
+        exam_schedule: {
+          subject_code: schedule.subject_code,
+          semester_id: schedule.semester_id,
+        }
+      },
+      select: { student_code: true }
+    });
+    const alreadyTakenStudentCodes = new Set(existingSubjectSemesterRecords.map(r => r.student_code));
+
     // 4. Tính toán mốc 00:00:00 và 23:59:59 của ngày thi theo giờ Việt Nam
     const startOfDayVN = dayjs(schedule.start_time).tz("Asia/Ho_Chi_Minh").startOf('day').toDate();
     const endOfDayVN = dayjs(schedule.start_time).tz("Asia/Ho_Chi_Minh").endOf('day').toDate();
@@ -449,8 +484,12 @@ export class AttendanceRecordsService {
         failed.push({ student_code: code, reason: 'Không tìm thấy sinh viên' });
         continue;
       }
+      if (alreadyTakenStudentCodes.has(code)) {
+        failed.push({ student_code: code, reason: 'Đã có lịch thi môn này trong học kì hiện tại' });
+        continue;
+      }
       if (busyStudentCodes.has(code)) {
-        failed.push({ student_code: code, reason: 'Đã có lịch thi trong ngày hôm nay' });
+        failed.push({ student_code: code, reason: 'Đã có lịch thi trong ngày hôm nay trùng giờ' });
         continue;
       }
       toCreate.push(code);
@@ -530,6 +569,89 @@ export class AttendanceRecordsService {
     return {
       message: `Đã xoá thành công ${success} bản ghi điểm danh, thất bại ${failed} bản ghi.`,
       data: { success, failed, errors }
+    };
+  }
+
+  async importFromExcel(fileBuffer: Buffer, exam_schedule_id: string) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(fileBuffer as any);
+    
+    const worksheet = workbook.worksheets[0];
+    if (!worksheet) {
+      throw new BadRequestException("File Excel không hợp lệ hoặc rỗng");
+    }
+
+    let mssvColIndex = -1;
+    let headerRowIndex = -1;
+
+    // Quét qua 15 dòng đầu tiên để tìm header
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (headerRowIndex !== -1 || rowNumber > 15) return;
+      
+      row.eachCell((cell, colNumber) => {
+        const val = cell.text?.toString().trim().toLowerCase() || '';
+        if (val.includes('mssv') || val.includes('mã sv') || val.includes('mã sinh viên') || val.includes('student code') || val === 'student_code') {
+          mssvColIndex = colNumber;
+          headerRowIndex = rowNumber;
+        }
+      });
+    });
+
+    if (headerRowIndex === -1 || mssvColIndex === -1) {
+      throw new BadRequestException("Không tìm thấy cột MSSV trong file Excel. Hãy đảm bảo cột có tiêu đề chứa chữ 'MSSV', 'Mã SV', 'Mã sinh viên' hoặc 'Student Code'.");
+    }
+
+    const student_codes: string[] = [];
+    const codeToRowMap = new Map<string, number>();
+
+    // Lấy data từ dưới dòng header
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber <= headerRowIndex) return;
+
+      const cell = row.getCell(mssvColIndex);
+      const val = cell.text?.toString().trim();
+      if (val) {
+        student_codes.push(val);
+        const upperVal = val.toUpperCase();
+        if (!codeToRowMap.has(upperVal)) {
+          codeToRowMap.set(upperVal, rowNumber);
+        }
+      }
+    });
+
+    if (student_codes.length === 0) {
+      throw new BadRequestException("Không tìm thấy danh sách mã sinh viên nào hợp lệ trong file");
+    }
+
+    // Tái sử dụng logic bulkCreate
+    const bulkResult = await this.bulkCreate({
+      exam_schedule_id,
+      student_codes
+    });
+
+    const failed = bulkResult.data.failed;
+    
+    if (failed.length > 0) {
+      const rawErrors = failed.map(f => ({
+        row: codeToRowMap.get(f.student_code.toUpperCase()) || 0,
+        error: f.reason
+      }));
+
+      // Trả về response bình thường (HTTP 200) thay vì ném lỗi để frontend nhận được rawErrors
+      return {
+        message: `Import hoàn tất. Thêm thành công ${bulkResult.data.success.length} sinh viên, thất bại ${failed.length} sinh viên.`,
+        data: {
+          success: bulkResult.data.success,
+          rawErrors
+        }
+      };
+    }
+
+    return {
+      message: `Import thành công toàn bộ ${bulkResult.data.success.length} sinh viên!`,
+      data: {
+        success: bulkResult.data.success
+      }
     };
   }
 }

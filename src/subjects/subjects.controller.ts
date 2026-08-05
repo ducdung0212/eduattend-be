@@ -24,8 +24,9 @@ export class SubjectsController {
     @Query('search') search?:string,
     @Query('page') page?:string,
     @Query('limit') limit?:string,
+    @Query('semester') semester?:string,
   ) {
-    return this.subjectsService.findAll({search,page:page?+page:undefined,limit:limit?+limit:undefined});
+    return this.subjectsService.findAll({search,page:page?+page:undefined,limit:limit?+limit:undefined,semester:semester?+semester:undefined});
   }
   @Post('import')
       @UseInterceptors(FileInterceptor('file'))

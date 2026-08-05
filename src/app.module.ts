@@ -16,7 +16,7 @@ import { ExamSupervisorsModule } from './exam-supervisors/exam-supervisors.modul
 import { AwsModule } from './aws/aws.module';
 import { StudentPhotosModule } from './student_photos/student-photos.module';
 import { LecturerPhotosModule } from './lecturer-photos/lecturer-photos.module';
-import { ExamPeriodsModule } from './exam-periods/exam-periods.module';
+import { SemestersModule } from './semesters/semesters.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
@@ -36,7 +36,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     AwsModule,
     StudentPhotosModule,
     LecturerPhotosModule,
-    ExamPeriodsModule,
+    SemestersModule,
     DashboardModule,
   ],
   controllers: [AppController],

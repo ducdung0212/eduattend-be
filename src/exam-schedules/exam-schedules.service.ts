@@ -20,7 +20,8 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
   subject: {
     select: {
       subject_code: true,
-      name: true
+      name: true,
+      semester: true,
     }
   },
   room: {
@@ -29,10 +30,11 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
       name: true
     }
   },
-  exam_period: {
+  semester: {
     select: {
       id: true,
-      name: true,
+      academic_year: true,
+      semester_number: true,
       start_date: true,
       end_date: true,
     }
@@ -43,31 +45,31 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
 export class ExamSchedulesService {
   constructor(private prisma: PrismaService) { }
 
-  private async checkRoomAvailability(room_code:string,start_time:Date|string,duration:number,excludeScheduleId?:string){
-    const newStart=dayjs(start_time);
-    const newEnd=newStart.add(duration,'minute');
+  private async checkRoomAvailability(room_code: string, start_time: Date | string, duration: number, excludeScheduleId?: string) {
+    const newStart = dayjs(start_time);
+    const newEnd = newStart.add(duration, 'minute');
 
-    const queryStart=newStart.subtract(1,'day').toDate();
-    const queryEnd=newStart.add(1,'day').toDate();
-    
-    const existingSchedules=await this.prisma.examSchedule.findMany({
-      where:{
-        room_code:room_code,
-        start_time:{
-          gte:queryStart,
-          lte:queryEnd,
+    const queryStart = newStart.subtract(1, 'day').toDate();
+    const queryEnd = newStart.add(1, 'day').toDate();
+
+    const existingSchedules = await this.prisma.examSchedule.findMany({
+      where: {
+        room_code: room_code,
+        start_time: {
+          gte: queryStart,
+          lte: queryEnd,
         },
-        ...(excludeScheduleId?{id:{not:excludeScheduleId}}:{})
+        ...(excludeScheduleId ? { id: { not: excludeScheduleId } } : {})
       },
-      select:{
-        start_time:true,
-        duration:true
+      select: {
+        start_time: true,
+        duration: true
       }
     })
 
-    const isOverlap=existingSchedules.some(schedule=>{
-      const existingStart=dayjs(schedule.start_time);
-      const existingEnd=existingStart.add(schedule.duration,'minute');
+    const isOverlap = existingSchedules.some(schedule => {
+      const existingStart = dayjs(schedule.start_time);
+      const existingEnd = existingStart.add(schedule.duration, 'minute');
 
       return newStart.isBefore(existingEnd) && newEnd.isAfter(existingStart);
     });
@@ -77,18 +79,18 @@ export class ExamSchedulesService {
   }
 
   /**
-   * Kiểm tra ràng buộc: trong cùng một đợt thi, mỗi môn chỉ có duy nhất một nhóm.
-   * Nếu đã tồn tại ca thi cùng subject_code + group trong exam_period → throw ConflictException.
+   * Kiểm tra ràng buộc: trong cùng một học kì, mỗi môn chỉ có duy nhất một nhóm.
+   * Nếu đã tồn tại ca thi cùng subject_code + group trong semester → throw ConflictException.
    */
   private async checkSubjectGroupUnique(
-    exam_period_id: string,
+    semester_id: string,
     subject_code: string,
     group: number,
     excludeScheduleId?: string,
   ) {
     const existing = await this.prisma.examSchedule.findFirst({
       where: {
-        exam_period_id,
+        semester_id,
         subject_code,
         group,
         ...(excludeScheduleId ? { id: { not: excludeScheduleId } } : {}),
@@ -97,7 +99,7 @@ export class ExamSchedulesService {
     });
     if (existing) {
       throw new ConflictException(
-        `Môn ${subject_code} nhóm ${group} đã tồn tại trong đợt thi này`,
+        `Môn ${subject_code} nhóm ${group} đã tồn tại trong học kì này`,
       );
     }
   }
@@ -116,19 +118,28 @@ export class ExamSchedulesService {
       throw new NotFoundException("Không tồn tại phòng")
     }
 
-    // Validate exam_period_id nếu có
-    if (createExamScheduleDto.exam_period_id) {
-      const period = await this.prisma.examPeriod.findUnique({
-        where: { id: createExamScheduleDto.exam_period_id },
-      });
-      if (!period) {
-        throw new NotFoundException('Không tìm thấy đợt thi');
+    // Validate semester_id
+    if (!createExamScheduleDto.semester_id) {
+      throw new BadRequestException('Mã học kì không được để trống');
+    }
+
+    const semester = await this.prisma.semester.findUnique({
+      where: { id: createExamScheduleDto.semester_id },
+    });
+    if (!semester) {
+      throw new NotFoundException('Không tìm thấy học kì');
+    }
+
+    // Kiểm tra ràng buộc môn học theo học kì
+    if (semester.semester_number === 1 || semester.semester_number === 2) {
+      if (existingSubject.semester !== semester.semester_number) {
+        throw new BadRequestException(`Môn học này không được tổ chức trong học kì ${semester.semester_number}`);
       }
     }
 
-    // Kiểm tra trùng môn + nhóm trong đợt thi
+    // Kiểm tra trùng môn + nhóm trong học kì
     await this.checkSubjectGroupUnique(
-      createExamScheduleDto.exam_period_id,
+      createExamScheduleDto.semester_id,
       createExamScheduleDto.subject_code,
       createExamScheduleDto.group,
     );
@@ -148,16 +159,16 @@ export class ExamSchedulesService {
     }
   }
 
- async findAll(query: {
+  async findAll(query: {
     search?: string,
     start_time?: string,
     page?: number,
     limit?: number,
-    student_code?:string,
-    lecturer_code?:string,
-    exam_period_id?:string,
+    student_code?: string,
+    lecturer_code?: string,
+    semester_id?: string,
   } = {}) {
-    const { search, start_time, student_code, lecturer_code, exam_period_id } = query;
+    const { search, start_time, student_code, lecturer_code, semester_id } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
 
@@ -175,11 +186,11 @@ export class ExamSchedulesService {
       } : {}),
       start_time: start_time
         ? {
-            gte: dayjs.tz(start_time, "Asia/Ho_Chi_Minh").startOf('day').toDate(),
-            lte: dayjs.tz(start_time, "Asia/Ho_Chi_Minh").endOf('day').toDate(),
-          }
+          gte: dayjs.tz(start_time, "Asia/Ho_Chi_Minh").startOf('day').toDate(),
+          lte: dayjs.tz(start_time, "Asia/Ho_Chi_Minh").endOf('day').toDate(),
+        }
         : undefined,
-        // Điều kiện lọc theo Sinh Viên (Lấy các ca thi mà sinh viên này có tên trong danh sách điểm danh)
+      // Điều kiện lọc theo Sinh Viên (Lấy các ca thi mà sinh viên này có tên trong danh sách điểm danh)
       ...(student_code ? {
         attendance_records: {
           some: {
@@ -198,7 +209,7 @@ export class ExamSchedulesService {
       } : {}),
 
       // Điều kiện lọc theo đợt thi
-      ...(exam_period_id ? { exam_period_id } : {}),
+      ...(semester_id ? { semester_id } : {}),
     };
 
     const [rawExamSchedules, total] = await Promise.all([
@@ -279,15 +290,16 @@ export class ExamSchedulesService {
         hasPrevPage: page > 1,
       }
     };
-}
+  }
   async findOngoing(query: {
     search?: string;
-    exam_period_id?: string;
     page?: number;
     limit?: number;
-    lecturer_code?:string;
+    semester_id?: string;
+    lecturer_code?: string,
   } = {}) {
-    const { search, exam_period_id,lecturer_code } = query;
+    const today = new Date();
+    const { search, semester_id, lecturer_code } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
 
@@ -311,8 +323,8 @@ export class ExamSchedulesService {
           { room: { name: { contains: search, mode: 'insensitive' } } },
         ]
       } : {}),
-      
-      ...(exam_period_id ? { exam_period_id } : {}),
+
+      ...(semester_id ? { semester_id } : {}),
 
       ...(lecturer_code ? {
         exam_supervisors: {
@@ -384,7 +396,7 @@ export class ExamSchedulesService {
   async findOne(id: string) {
     const examSchedule = await this.prisma.examSchedule.findUnique({
       where: { id },
-      select: {id:true}
+      select: { id: true }
     })
     if (!examSchedule) {
       throw new NotFoundException("Không tìm thấy ca thi")
@@ -395,9 +407,10 @@ export class ExamSchedulesService {
   async update(id: string, updateExamScheduleDto: UpdateExamScheduleDto) {
     // Lấy thông tin ca thi hiện tại từ DB để đối chiếu
     const currentSchedule = await this.prisma.examSchedule.findUnique({
-      where: { id }
+      where: { id },
+      include: { subject: true }
     });
-    
+
     if (!currentSchedule) {
       throw new NotFoundException("Không tìm thấy ca thi");
     }
@@ -424,26 +437,41 @@ export class ExamSchedulesService {
 
     // Chỉ check lại sự khả dụng nếu có tác động đến cấu hình phòng, thời gian thi hoặc thời lượng thi
     if (
-      updateExamScheduleDto.room_code !== undefined || 
-      updateExamScheduleDto.start_time !== undefined || 
+      updateExamScheduleDto.room_code !== undefined ||
+      updateExamScheduleDto.start_time !== undefined ||
       updateExamScheduleDto.duration !== undefined
     ) {
       // Nhớ truyền 'id' vào tham số thứ 4 để loại trừ chính ca thi này lúc kiểm tra DB
       await this.checkRoomAvailability(targetRoomCode, targetStartTime, targetDuration, id);
     }
 
-    // Kiểm tra trùng môn + nhóm trong đợt thi (khi thay đổi subject, group, hoặc exam_period)
+    // Kiểm tra trùng môn + nhóm trong đợt thi (khi thay đổi subject, group, hoặc semester)
     if (
       updateExamScheduleDto.subject_code !== undefined ||
       updateExamScheduleDto.group !== undefined ||
-      updateExamScheduleDto.exam_period_id !== undefined
+      updateExamScheduleDto.semester_id !== undefined
     ) {
-      const targetSubjectCode = updateExamScheduleDto.subject_code ?? currentSchedule.subject_code;
+      const targetSubjectCode = updateExamScheduleDto.subject_code ?? currentSchedule.subject.subject_code;
       const targetGroup = updateExamScheduleDto.group ?? currentSchedule.group;
-      const targetExamPeriodId = updateExamScheduleDto.exam_period_id ?? currentSchedule.exam_period_id;
-      if (targetExamPeriodId) {
-        await this.checkSubjectGroupUnique(targetExamPeriodId, targetSubjectCode, targetGroup, id);
+      const targetSemesterId = updateExamScheduleDto.semester_id ?? currentSchedule.semester_id;
+
+      // Validate semester constraint if subject or semester changes
+      if (updateExamScheduleDto.subject_code !== undefined || updateExamScheduleDto.semester_id !== undefined) {
+        const semester = await this.prisma.semester.findUnique({ where: { id: targetSemesterId } });
+        const subject = await this.prisma.subject.findUnique({ where: { subject_code: targetSubjectCode } });
+        if (semester && subject && (semester.semester_number === 1 || semester.semester_number === 2)) {
+          if (subject.semester !== semester.semester_number) {
+            throw new BadRequestException(`Môn học này không được tổ chức trong học kì ${semester.semester_number}`);
+          }
+        }
       }
+
+      await this.checkSubjectGroupUnique(
+        targetSemesterId,
+        targetSubjectCode,
+        targetGroup,
+        id
+      );
     }
 
     const examSchedule = await this.prisma.examSchedule.update({
@@ -468,14 +496,14 @@ export class ExamSchedulesService {
     }
   }
 
-  async importFromExcel(fileBuffer: Buffer, exam_period_id: string) {
-    const period = await this.prisma.examPeriod.findUnique({
-      where: { id: exam_period_id },
+  async importFromExcel(fileBuffer: Buffer, semester_id: string) {
+    const semester = await this.prisma.semester.findUnique({
+      where: { id: semester_id },
     });
-    if (!period) throw new BadRequestException('Đợt thi không hợp lệ');
+    if (!semester) throw new BadRequestException('Học kì không hợp lệ');
 
-    const periodStart = dayjs(period.start_date).tz('Asia/Ho_Chi_Minh').startOf('day').toDate();
-    const periodEnd = dayjs(period.end_date).tz('Asia/Ho_Chi_Minh').endOf('day').toDate();
+    const periodStart = dayjs(semester.start_date).tz('Asia/Ho_Chi_Minh').startOf('day').toDate();
+    const periodEnd = dayjs(semester.end_date).tz('Asia/Ho_Chi_Minh').endOf('day').toDate();
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileBuffer as any);
@@ -552,14 +580,14 @@ export class ExamSchedulesService {
 
         // 1. Lấy chuỗi ngày YYYY-MM-DD chính xác từ object exam_date (bỏ qua timezone của server)
         const dateStr = dayjs.utc(exam_date).format('YYYY-MM-DD');
-        
+
         // 2. Chèn 0 vào trước giờ/phút nếu cần thiết để đảm bảo chuẩn ISO 8601
         const hh = String(hours).padStart(2, '0');
         const mm = String(minutes).padStart(2, '0');
-        
+
         // 3. Ghép thành chuỗi chuẩn ISO (vd: "2026-06-15T09:30:00")
         const dateTimeStr = `${dateStr}T${hh}:${mm}:00`;
-        
+
         // 4. Áp dụng timezone VN và quy đổi về object Date thuần của JS để lưu DB
         combinedDateTime = dayjs.tz(dateTimeStr, "Asia/Ho_Chi_Minh").toDate();
 
@@ -570,9 +598,9 @@ export class ExamSchedulesService {
 
       // Validate date bounds
       if (combinedDateTime < periodStart || combinedDateTime > periodEnd) {
-        const pStartStr = dayjs(period.start_date).tz('Asia/Ho_Chi_Minh').format('DD/MM/YYYY');
-        const pEndStr = dayjs(period.end_date).tz('Asia/Ho_Chi_Minh').format('DD/MM/YYYY');
-        errorRows.push({ row: i, error: `Ngày thi nằm ngoài thời gian của đợt thi (${pStartStr} - ${pEndStr})` });
+        const pStartStr = dayjs(semester.start_date).tz('Asia/Ho_Chi_Minh').format('DD/MM/YYYY');
+        const pEndStr = dayjs(semester.end_date).tz('Asia/Ho_Chi_Minh').format('DD/MM/YYYY');
+        errorRows.push({ row: i, error: `Ngày thi nằm ngoài thời gian thi của học kì (${pStartStr} - ${pEndStr})` });
         continue;
       }
 
@@ -604,7 +632,7 @@ export class ExamSchedulesService {
     const [validSubjects, validRooms] = await Promise.all([
       this.prisma.subject.findMany({
         where: { subject_code: { in: allSubjectCodes } },
-        select: { subject_code: true },
+        select: { subject_code: true, semester: true },
       }),
       this.prisma.room.findMany({
         where: { room_code: { in: allRoomCodes } },
@@ -612,15 +640,25 @@ export class ExamSchedulesService {
       }),
     ]);
 
-    const validSubjectSet = new Set(validSubjects.map(s => s.subject_code));
+    const validSubjectMap = new Map(validSubjects.map(s => [s.subject_code, s]));
     const validRoomSet = new Set(validRooms.map(r => r.room_code));
 
     // ── Pass 3: Validate FK ───────────────────────────────────────
     const validRows = rawRows.filter(row => {
-      if (!validSubjectSet.has(row.subject_code)) {
+      const subject = validSubjectMap.get(row.subject_code);
+      if (!subject) {
         errorRows.push({ row: row.rowNum, error: `Mã môn học '${row.subject_code}' không tồn tại` });
         return false;
       }
+
+      // Check ràng buộc kì học
+      if (semester.semester_number === 1 || semester.semester_number === 2) {
+        if (subject.semester !== semester.semester_number) {
+          errorRows.push({ row: row.rowNum, error: `Môn '${row.subject_code}' không được tổ chức trong học kì ${semester.semester_number}` });
+          return false;
+        }
+      }
+
       if (!validRoomSet.has(row.room_code)) {
         errorRows.push({ row: row.rowNum, error: `Mã phòng '${row.room_code}' không tồn tại` });
         return false;
@@ -631,9 +669,9 @@ export class ExamSchedulesService {
     // ── Pass 3.5: Validate constraints (Local + DB) ───────────────
     const localSubjectGroups = new Set<string>();
     const localRooms = new Map<string, { start: dayjs.Dayjs, end: dayjs.Dayjs }[]>();
-    
+
     const fullyValidRows: any[] = [];
-    
+
     for (const row of validRows) {
       try {
         // Local check: Subject Group
@@ -644,12 +682,12 @@ export class ExamSchedulesService {
         localSubjectGroups.add(sgKey);
 
         // DB check: Subject Group
-        await this.checkSubjectGroupUnique(exam_period_id, row.subject_code, row.group);
+        await this.checkSubjectGroupUnique(semester_id, row.subject_code, row.group);
 
         // Local check: Room Overlap
         const newStart = dayjs(row.start_time);
         const newEnd = newStart.add(row.duration, 'minute');
-        
+
         const roomSchedules = localRooms.get(row.room_code) || [];
         const isLocalOverlap = roomSchedules.some(rs => {
           return newStart.isBefore(rs.end) && newEnd.isAfter(rs.start);
@@ -664,7 +702,7 @@ export class ExamSchedulesService {
         await this.checkRoomAvailability(row.room_code, row.start_time, row.duration);
 
         // Valid!
-        fullyValidRows.push({ ...row, exam_period_id });
+        fullyValidRows.push({ ...row, semester_id });
       } catch (error: any) {
         errorRows.push({ row: row.rowNum, error: error.message });
       }

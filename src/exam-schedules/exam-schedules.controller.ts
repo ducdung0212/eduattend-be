@@ -26,7 +26,7 @@ export class ExamSchedulesController {
     @Query('limit') limit?: string,
     @Query('student_code') student_code?: string,
     @Query('lecturer_code') lecturer_code?: string,
-    @Query('exam_period_id') exam_period_id?: string,
+    @Query('semester_id') semester_id?: string,
   ) {
     return this.examSchedulesService.findAll({
       search,
@@ -35,7 +35,7 @@ export class ExamSchedulesController {
       limit: limit ? +limit : undefined,
       student_code,
       lecturer_code,
-      exam_period_id,
+      semester_id,
     });
   }
 
@@ -43,14 +43,14 @@ export class ExamSchedulesController {
   @Roles('admin', 'lecturer')
   findOngoing(
     @Query('search') search?: string,
-    @Query('exam_period_id') exam_period_id?: string,
+    @Query('semester_id') semester_id?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('lecturer_code') lecturer_code?:string,
   ) {
     return this.examSchedulesService.findOngoing({ 
       search, 
-      exam_period_id,
+      semester_id,
       page: page ? +page : undefined,
       limit: limit ? +limit : undefined,
       lecturer_code:lecturer_code?lecturer_code:undefined
@@ -61,7 +61,7 @@ export class ExamSchedulesController {
   @UseInterceptors(FileInterceptor('file'))
   async importExamSchedules(
     @UploadedFile() file: Express.Multer.File,
-    @Body('exam_period_id') exam_period_id: string,
+    @Body('semester_id') semester_id: string,
   ) {
     // 1. Validate xem người dùng có gửi file lên không
     if (!file) {
@@ -77,11 +77,11 @@ export class ExamSchedulesController {
       throw new BadRequestException('Chỉ chấp nhận định dạng file Excel (.xlsx, .xls)');
     }
 
-    if (!exam_period_id) {
-      throw new BadRequestException('Vui lòng chọn đợt thi');
+    if (!semester_id) {
+      throw new BadRequestException('Vui lòng chọn học kì');
     }
 
-    return this.examSchedulesService.importFromExcel(file.buffer, exam_period_id);
+    return this.examSchedulesService.importFromExcel(file.buffer, semester_id);
   }
 
   @Get(':id')

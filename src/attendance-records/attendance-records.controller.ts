@@ -45,6 +45,29 @@ export class AttendanceRecordsController {
     bulkCreate(@Body() dto: CreateAttendanceRecordBulkDto) {
       return this.attendanceRecordsService.bulkCreate(dto);
     }
+
+  @Roles('admin', 'lecturer')
+  @UseGuards(ExamScheduleOwnerGuard)
+  @Post('import/:exam_schedule_id')
+  @UseInterceptors(FileInterceptor('file'))
+  async importFromExcel(
+    @Param('exam_schedule_id') exam_schedule_id: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new FileTypeValidator({ fileType: /excel|spreadsheetml/ }),
+          new MaxFileSizeValidator({
+            maxSize: 5 * 1024 * 1024, // 5MB
+            message: 'File không được vượt quá 5MB',
+          }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.attendanceRecordsService.importFromExcel(file.buffer, exam_schedule_id);
+  }
+
   @Roles('admin','lecturer')
   @UseGuards(ExamScheduleOwnerGuard)
   @Post('check-in')

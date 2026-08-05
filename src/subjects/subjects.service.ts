@@ -8,6 +8,7 @@ import * as ExcelJS from 'exceljs';
 const SUBJECT_SELECT: Prisma.SubjectSelect = {
   subject_code: true,
   name: true,
+  semester: true,
   created_at: true,
   updated_at: true,
 };
@@ -39,8 +40,9 @@ export class SubjectsService {
     search?: string;
     page?: number;
     limit?: number;
+    semester?: number;
   } = {}) {
-    const { search } = query;
+    const { search, semester } = query;
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 100;
     const take = Math.min(limit, 100);
@@ -52,7 +54,8 @@ export class SubjectsService {
           { subject_code: { contains: search, mode: 'insensitive' } },
           { name: { contains: search, mode: 'insensitive' } }
         ]
-      } : {})
+      } : {}),
+      ...(semester !== undefined ? { semester } : {}),
     };
 
     const [data, total] = await Promise.all([
@@ -142,6 +145,7 @@ export class SubjectsService {
       rowNum: number;
       subject_code: string;
       name: string;
+      semester: number | null;
     }[] = [];
 
     const seenCodes = new Set<string>();
@@ -152,16 +156,29 @@ export class SubjectsService {
 
       const subject_code = getCellValue(row.getCell(1)).trim();
       const name = getCellValue(row.getCell(2)).trim();
+      const semesterRaw = getCellValue(row.getCell(3)).trim();
 
       if (!subject_code || !name) {
         errorRows.push({ row: i, error: 'Thiếu thông tin bắt buộc (mã môn, tên môn)' })
         continue;
       }
+
+      let semester: number | null = null;
+      if (semesterRaw) {
+        const parsed = Number(semesterRaw);
+        if (parsed === 1 || parsed === 2) {
+          semester = parsed;
+        } else {
+          errorRows.push({ row: i, error: `Học kì '${semesterRaw}' không hợp lệ (chỉ nhận 1 hoặc 2)` });
+          continue;
+        }
+      }
+
       if (seenCodes.has(subject_code)) {
         errorRows.push({ row: i, error: `Mã môn '${subject_code}' bị trùng lặp trong file` })
         continue;
       }
-      rawRows.push({ rowNum: i, subject_code, name });
+      rawRows.push({ rowNum: i, subject_code, name, semester });
     }
     if (rawRows.length === 0) {
       return {

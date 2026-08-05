@@ -31,7 +31,7 @@ export class DashboardService {
       }
     });
 
-    const activePeriods = await this.prisma.examPeriod.count({
+    const activeSemesters = await this.prisma.semester.count({
       where: {
         start_date: { lte: todayEnd },
         end_date: { gte: todayStart }
@@ -59,7 +59,7 @@ export class DashboardService {
         studentsWithPhotos,
         photoCoveragePercent: totalStudents > 0 ? Math.round((studentsWithPhotos / totalStudents) * 100) : 0,
         examsToday,
-        activePeriods,
+        activeSemesters,
       },
       attendanceStats: attendanceStats.reduce((acc, curr) => {
         acc[curr.status || 'unknown'] = curr._count._all;

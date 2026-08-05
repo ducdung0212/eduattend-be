@@ -101,6 +101,15 @@ export class ExamSupervisorsService {
       throw new ConflictException("Giảng viên này đã được phân công coi thi cho ca thi này");
     }
 
+    const quantity=await this.prisma.examSupervisor.count({
+      where:{
+        exam_schedule_id:createExamSupervisorDto.exam_schedule_id
+      }
+    })
+    if (quantity >= 4) {
+      throw new ConflictException("Mỗi ca thi chỉ có thể có tối đa 4 giám thị");
+    }
+
     const lecturer = await this.prisma.lecturer.findUnique({
       where: { lecturer_code: createExamSupervisorDto.lecturer_code }
     });
@@ -257,6 +266,12 @@ export class ExamSupervisorsService {
     });
     const alreadyAssigned = new Set(existingSupervisors.map((s) => s.lecturer_code));
 
+    // Đếm số lượng giám thị HIỆN TẠI của ca thi để kiểm tra giới hạn (tối đa 4)
+    const currentSupervisorCount = await this.prisma.examSupervisor.count({
+      where: { exam_schedule_id }
+    });
+    let availableSlots = Math.max(0, 4 - currentSupervisorCount);
+
     // 5. Kiểm tra trùng giờ: Lấy thông tin ca thi mục tiêu + tất cả ca thi đang coi của các giảng viên
     const targetSchedule = await this.prisma.examSchedule.findUnique({
       where: { id: exam_schedule_id },
@@ -324,7 +339,14 @@ export class ExamSupervisorsService {
       }
       if (hasConflict) continue;
 
+      // Kiểm tra giới hạn 4 giám thị
+      if (availableSlots <= 0) {
+        failed.push({ lecturer_code: code, reason: 'Mỗi ca thi chỉ có thể có tối đa 4 giám thị' });
+        continue;
+      }
+
       toCreate.push(code);
+      availableSlots--;
     }
 
     // 6. Thực hiện Transaction

@@ -37,7 +37,7 @@ model Class {
   faculty_code String    @db.VarChar(20)
   created_at   DateTime  @default(now()) @db.Timestamp(0)
   updated_at   DateTime  @updatedAt @db.Timestamp(0)
-  faculty      Faculty   @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
+  faculty      Faculty   @relation(fields: [faculty_code], references: [faculty_code])
   students     Student[]
 
   @@index([faculty_code])
@@ -49,6 +49,7 @@ model Subject {
   name           String         @db.VarChar(100)
   created_at     DateTime       @default(now()) @db.Timestamp(0)
   updated_at     DateTime       @updatedAt @db.Timestamp(0)
+  semester       Int?
   exam_schedules ExamSchedule[]
 
   @@map("subjects")
@@ -66,8 +67,8 @@ model Student {
   user_id            String?            @unique @db.Uuid
   attendance_records AttendanceRecord[]
   photos             StudentPhoto[]
-  class              Class              @relation(fields: [class_code], references: [class_code], onDelete: Restrict)
-  user               User?              @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  class              Class              @relation(fields: [class_code], references: [class_code])
+  user               User?              @relation(fields: [user_id], references: [id])
 
   @@index([class_code])
   @@map("students")
@@ -84,9 +85,9 @@ model Lecturer {
   updated_at        DateTime         @updatedAt @db.Timestamp(0)
   user_id           String?          @unique @db.Uuid
   supervising_exams ExamSupervisor[]
-  faculty           Faculty          @relation(fields: [faculty_code], references: [faculty_code], onDelete: Restrict)
-  user              User?            @relation(fields: [user_id], references: [id], onDelete: SetNull)
   photos            LecturerPhoto[]
+  faculty           Faculty          @relation(fields: [faculty_code], references: [faculty_code])
+  user              User?            @relation(fields: [user_id], references: [id])
 
   @@index([faculty_code])
   @@map("lecturers")
@@ -104,39 +105,41 @@ model LecturerPhoto {
   @@map("lecturer_photos")
 }
 
-model ExamPeriod {
-  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String         @db.VarChar(200)
-  start_date     DateTime       @db.Date
-  end_date       DateTime       @db.Date
-  created_at     DateTime       @default(now()) @db.Timestamp(0)
-  updated_at     DateTime       @updatedAt @db.Timestamp(0)
-  exam_schedules ExamSchedule[]
+model Semester {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  academic_year   String         @db.VarChar(20)
+  semester_number Int
+  start_date      DateTime       @db.Date
+  end_date        DateTime       @db.Date
+  created_at      DateTime       @default(now()) @db.Timestamp(0)
+  updated_at      DateTime       @updatedAt @db.Timestamp(0)
+  exam_schedules  ExamSchedule[]
 
-  @@map("exam_periods")
+  @@unique([academic_year, semester_number])
+  @@map("semesters")
 }
 
 model ExamSchedule {
-  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   subject_code       String             @db.VarChar(20)
-  group              Int
-  start_time         DateTime           @db.Timestamptz(3)
   duration           Int
-  room_code          String             @db.VarChar(20)
   note               String?
-  exam_period_id     String?            @db.Uuid
   created_at         DateTime           @default(now()) @db.Timestamp(0)
   updated_at         DateTime           @updatedAt @db.Timestamp(0)
+  room_code          String             @db.VarChar(20)
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  start_time         DateTime           @db.Timestamptz(3)
+  group              Int
+  semester_id        String             @db.Uuid
   attendance_records AttendanceRecord[]
-  subject            Subject            @relation(fields: [subject_code], references: [subject_code], onDelete: Restrict)
-  room               Room               @relation(fields: [room_code], references: [room_code], onDelete: Restrict)
-  exam_period        ExamPeriod?        @relation(fields: [exam_period_id], references: [id], onDelete: SetNull)
+  room               Room               @relation(fields: [room_code], references: [room_code])
+  semester           Semester           @relation(fields: [semester_id], references: [id])
+  subject            Subject            @relation(fields: [subject_code], references: [subject_code])
   exam_supervisors   ExamSupervisor[]
 
   @@unique([subject_code, start_time, room_code])
   @@index([room_code])
   @@index([start_time])
-  @@index([exam_period_id])
+  @@index([semester_id])
   @@map("exam_schedules")
 }
 
@@ -160,12 +163,12 @@ model AttendanceRecord {
   rekognition_result RekognitionResult?
   confidence         Decimal?           @db.Decimal(5, 2)
   attendance_time    DateTime?          @db.Timestamp(0)
-  note               String?            @db.Text
-  status             AttendanceStatus?
   created_at         DateTime           @default(now()) @db.Timestamp(0)
   updated_at         DateTime           @updatedAt @db.Timestamp(0)
   id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   exam_schedule_id   String             @db.Uuid
+  note               String?
+  status             AttendanceStatus?
   exam_schedule      ExamSchedule       @relation(fields: [exam_schedule_id], references: [id], onDelete: Cascade)
   student            Student            @relation(fields: [student_code], references: [student_code], onDelete: Cascade)
 
@@ -185,6 +188,17 @@ model StudentPhoto {
 
   @@index([student_code])
   @@map("student_photos")
+}
+
+model Room {
+  room_code      String         @id @db.VarChar(20)
+  name           String         @db.VarChar(100)
+  created_at     DateTime       @default(now()) @db.Timestamp(0)
+  updated_at     DateTime       @updatedAt @db.Timestamp(0)
+  capacity       Int
+  exam_schedules ExamSchedule[]
+
+  @@map("rooms")
 }
 
 enum Role {
@@ -209,15 +223,4 @@ enum AttendanceStatus {
   absent
   late
   excused
-}
-
-model Room {
-  room_code      String         @id @db.VarChar(20)
-  name           String         @db.VarChar(100)
-  capacity       Int
-  created_at     DateTime       @default(now()) @db.Timestamp(0)
-  updated_at     DateTime       @updatedAt @db.Timestamp(0)
-  exam_schedules ExamSchedule[]
-
-  @@map("rooms")
 }

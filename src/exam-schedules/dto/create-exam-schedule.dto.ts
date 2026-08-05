@@ -25,7 +25,7 @@ export class CreateExamScheduleDto {
     @IsNumber()
     group!: number;
 
-    @IsNotEmpty({message:"Mã kỳ thi không được để trống"})
-    @IsUUID('4', { message: 'Mã kỳ thi không hợp lệ' })
-    exam_period_id!: string;
+    @IsNotEmpty({message:"Mã học kì không được để trống"})
+    @IsUUID('4', { message: 'Mã học kì không hợp lệ' })
+    semester_id!: string;
 }
