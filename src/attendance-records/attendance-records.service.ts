@@ -30,11 +30,7 @@ const ATTENDANCE_RECORD_SELECT: Prisma.AttendanceRecordSelect = {
       student_code: true,
       first_name: true,
       last_name: true,
-      photos: {
-        select: {
-          image_url: true
-        }
-      },
+      image_url: true,
       class: {
         select: {
           class_code: true,

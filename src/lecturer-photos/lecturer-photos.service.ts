@@ -1,6 +1,7 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { ConfirmUploadResult, S3Service, GenerateUploadUrlResult } from 'src/aws/s3.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { LambdaService } from 'src/aws/lambda.service';
 import { GenerateLecturerUploadUrlItemDto } from './dto/generate-upload-url.dto';
 import { ConfirmLecturerUploadItemDto } from './dto/confirm-upload.dto';
 
@@ -11,6 +12,7 @@ export class LecturerPhotosService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly s3Service: S3Service,
+        private readonly lambdaService: LambdaService,
     ) {}
 
     async generateUploadUrls(files: GenerateLecturerUploadUrlItemDto[]): Promise<GenerateUploadUrlResult[]> {
@@ -147,38 +149,36 @@ export class LecturerPhotosService {
                 image_url: r.image_url 
             }));
 
-            let oldPhotos: { image_url: string }[] = [];
+            let oldPhotos: { lecturer_code: string; image_url: string | null }[] = [];
             try {
-                oldPhotos = await this.prisma.lecturerPhoto.findMany({
+                oldPhotos = await this.prisma.lecturer.findMany({
                     where: { lecturer_code: { in: codesToInsert } },
-                    select: { image_url: true }
+                    select: { lecturer_code: true, image_url: true }
                 });
             } catch (e) {
-                this.logger.error('Lỗi khi truy xuất ảnh cũ', e);
+                this.logger.error("Lỗi khi truy xuất ảnh cũ", e);
             }
 
             try {
-                await this.prisma.$transaction([
-                    this.prisma.lecturerPhoto.deleteMany({
-                        where: { lecturer_code: { in: codesToInsert } },
-                    }),
-                    this.prisma.lecturerPhoto.createMany({
-                        data: dbPayload
-                    }),
-                ]);
+                const updatePromises = rowsToInsert.map(r => 
+                    this.prisma.lecturer.update({
+                        where: { lecturer_code: r.lecturer_code },
+                        data: { image_url: r.image_url }
+                    })
+                );
+                await this.prisma.$transaction(updatePromises, {
+                    timeout: 20000 // Tăng timeout lên 20 giây để tránh lỗi hết hạn
+                });
 
-                // Xóa ảnh cũ trên S3 nếu khác url mới
+                // Xóa dữ liệu khuôn mặt trên AWS (S3, Rekognition, DynamoDB)
                 const newUrls = new Set(dbPayload.map(p => p.image_url));
                 for (const old of oldPhotos) {
-                    if (!newUrls.has(old.image_url)) {
-                        const oldFileName = old.image_url.split('/').pop();
-                        if (oldFileName) {
-                            await this.s3Service.deleteUnconfirmedFile(oldFileName, 'lecturer_images');
-                        }
+                    if (old.image_url && !newUrls.has(old.image_url)) {
+                        this.lambdaService.deleteFaceData('lecturer', old.lecturer_code);
                     }
                 }
             } catch (error) {
-                this.logger.error('Lỗi khi ghi vào lecturerPhoto.', error);
+                this.logger.error("Lỗi khi update image_url cho lecturer.", error);
                 
                 // Rollback & dọn rác
                 for (const row of rowsToInsert) {
@@ -186,7 +186,7 @@ export class LecturerPhotosService {
                     const targetResult = finalResults.find(r => r.student_code === row.lecturer_code);
                     if (targetResult) {
                         targetResult.success = false;
-                        targetResult.message = 'Lỗi ràng buộc CSDL. Đã hoàn tác để bảo đảm an toàn dữ liệu.';
+                        targetResult.message = 'Lỗi DB. Đã hoàn tác để bảo đảm an toàn dữ liệu.';
                     }
                 }
             }
@@ -195,24 +195,25 @@ export class LecturerPhotosService {
     }
 
     async deletePhoto(lecturer_code: string): Promise<{ message: string }> {
-        const photo = await this.prisma.lecturerPhoto.findFirst({
+        const lecturer = await this.prisma.lecturer.findUnique({
             where: { lecturer_code },
-            select: { id: true, image_url: true },
+            select: { image_url: true },
         });
 
-        if (!photo) {
+        if (!lecturer || !lecturer.image_url) {
             return { message: 'Giảng viên này chưa có ảnh' };
         }
 
+        const oldImageUrl = lecturer.image_url;
+
         // Xóa record trong DB
-        await this.prisma.lecturerPhoto.deleteMany({
+        await this.prisma.lecturer.update({
             where: { lecturer_code },
+            data: { image_url: null },
         });
 
-        // Xóa ảnh trên S3
-        await this.s3Service.deleteByUrl(photo.image_url).catch((err) => {
-            this.logger.error(`Không thể xóa ảnh S3 của giảng viên ${lecturer_code}`, err);
-        });
+        // Xóa dữ liệu khuôn mặt trên AWS Lambda (xóa luôn S3)
+        this.lambdaService.deleteFaceData('lecturer', lecturer_code);
 
         return { message: 'Xóa ảnh giảng viên thành công' };
     }

@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as ExcelJS from 'exceljs';
 import { S3Service } from 'src/aws/s3.service';
+import { LambdaService } from 'src/aws/lambda.service';
 
 // source: 1 - Cập nhật hằng số SELECT
 const LECTURER_SELECT: Prisma.LecturerSelect = {
@@ -15,6 +16,7 @@ const LECTURER_SELECT: Prisma.LecturerSelect = {
   email: true,
   phone: true,
   faculty_code: true,
+  image_url: true,
   created_at: true,
   updated_at: true,
   user_id: true,
@@ -30,11 +32,6 @@ const LECTURER_SELECT: Prisma.LecturerSelect = {
       name: true
     }
   },
-  photos: {
-    select: {
-      image_url: true,
-    }
-  }
 };
 
 @Injectable()
@@ -44,6 +41,7 @@ export class LecturersService {
   constructor(
     private prisma: PrismaService,
     private s3Service: S3Service,
+    private lambdaService: LambdaService,
   ) { }
 
   // lecturers.service.ts
@@ -132,7 +130,7 @@ export class LecturersService {
 
     const where: Prisma.LecturerWhereInput = {
       ...(faculty_code ? { faculty_code } : {}),
-      ...(is_has_photo === true ? { photos: { some: {} } } : is_has_photo === false ? { photos: { none: {} } } : {}),
+      ...(is_has_photo === true ? { image_url: { not: null } } : is_has_photo === false ? { image_url: null } : {}),
       ...(search ? {
         AND: search.split(/\s+/).filter(Boolean).map(term => ({
           OR: [
@@ -219,27 +217,15 @@ export class LecturersService {
   }
 
   async remove(lecturer_code: string) {
-    await this.findOne(lecturer_code);
+    const lecturer = await this.findOne(lecturer_code);
 
-    // Lấy ảnh của giảng viên trước khi xóa
-    const photo = await this.prisma.lecturerPhoto.findFirst({
-      where: { lecturer_code },
-      select: { image_url: true },
-    });
-
-    // Xóa giảng viên (LecturerPhoto sẽ bị xóa cascade theo DB)
     await this.prisma.lecturer.delete({
       where: { lecturer_code },
     });
 
-    // Xóa ảnh trên S3 bằng full URL (bất đồng bộ, không chặn response)
-    if (photo?.image_url) {
-      this.s3Service.deleteByUrl(photo.image_url).catch((err) => {
-        this.logger.error(
-          `Không thể xóa ảnh S3 của giảng viên ${lecturer_code}: ${photo.image_url}`,
-          err,
-        );
-      });
+    if (lecturer?.image_url) {
+      // Gọi Lambda xóa dữ liệu khuôn mặt trên AWS (Rekognition, DynamoDB, S3)
+      this.lambdaService.deleteFaceData('lecturer', lecturer_code);
     }
 
     return {

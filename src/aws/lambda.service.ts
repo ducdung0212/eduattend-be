@@ -36,6 +36,7 @@ export class LambdaService {
   private readonly client: LambdaClient;
   private readonly functionName: string;
   private readonly lecturerFunctionName: string;
+  private readonly deleteFaceFunctionName: string;
   private readonly logger = new Logger(LambdaService.name);
 
   constructor(private readonly configService: ConfigService) {
@@ -52,6 +53,9 @@ export class LambdaService {
     );
     this.lecturerFunctionName = configService.get<string>(
       'AWS_LAMBDA_LECTURER_FACE_RECOGNITION',
+    ) || '';
+    this.deleteFaceFunctionName = configService.get<string>(
+      'AWS_LAMBDA_DELETE_FACE_DATA',
     ) || '';
   }
 
@@ -236,6 +240,32 @@ export class LambdaService {
       success: false,
       message: finalMessage,
     };
+  }
+
+  // ─── LUỒNG 4: Xóa dữ liệu khuôn mặt trên Rekognition, DynamoDB, S3 ────────
+  async deleteFaceData(type: 'student' | 'lecturer', code: string): Promise<{ success: boolean; message: string }> {
+    if (!this.deleteFaceFunctionName) {
+      this.logger.warn('Chưa cấu hình AWS_LAMBDA_DELETE_FACE_DATA, bỏ qua xóa dữ liệu khuôn mặt trên AWS');
+      return { success: false, message: 'Chưa cấu hình Lambda xóa face' };
+    }
+
+    const payload = { type, code };
+    
+    try {
+      const command = new InvokeCommand({
+        FunctionName: this.deleteFaceFunctionName,
+        // Dùng Event để gọi bất đồng bộ, không cần chờ kết quả từ Lambda để tránh block API
+        InvocationType: InvocationType.Event,
+        Payload: Buffer.from(JSON.stringify(payload)),
+      });
+
+      await this.client.send(command);
+      this.logger.log(`Đã gửi yêu cầu xóa khuôn mặt cho ${type} ${code} tới Lambda`);
+      return { success: true, message: 'Yêu cầu xóa đã được gửi' };
+    } catch (error) {
+      this.logger.error(`Lỗi gọi Lambda xóa khuôn mặt cho ${type} ${code}`, error);
+      return { success: false, message: 'Lỗi khi gọi Lambda xóa khuôn mặt' };
+    }
   }
 
   // ─── Test kết nối Lambda (DryRun không thực thi, chỉ kiểm tra permission) ──

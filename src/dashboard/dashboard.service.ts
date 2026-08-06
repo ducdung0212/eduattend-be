@@ -11,8 +11,8 @@ export class DashboardService {
     // Students who have at least one photo
     const studentsWithPhotos = await this.prisma.student.count({
       where: {
-        photos: {
-          some: {}
+        image_url: {
+          not: null
         }
       }
     });
