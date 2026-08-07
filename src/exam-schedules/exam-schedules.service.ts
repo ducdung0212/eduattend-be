@@ -131,7 +131,8 @@ export class ExamSchedulesService {
     }
 
     // Kiểm tra ràng buộc môn học theo học kì
-    if (semester.semester_number === 1 || semester.semester_number === 2) {
+    // Nếu môn học có semester = null thì được phép tạo ở bất kỳ học kì nào
+    if (existingSubject.semester !== null && (semester.semester_number === 1 || semester.semester_number === 2)) {
       if (existingSubject.semester !== semester.semester_number) {
         throw new BadRequestException(`Môn học này không được tổ chức trong học kì ${semester.semester_number}`);
       }
@@ -456,10 +457,11 @@ export class ExamSchedulesService {
       const targetSemesterId = updateExamScheduleDto.semester_id ?? currentSchedule.semester_id;
 
       // Validate semester constraint if subject or semester changes
+      // Nếu môn học có semester = null thì được phép ở bất kỳ học kì nào
       if (updateExamScheduleDto.subject_code !== undefined || updateExamScheduleDto.semester_id !== undefined) {
         const semester = await this.prisma.semester.findUnique({ where: { id: targetSemesterId } });
         const subject = await this.prisma.subject.findUnique({ where: { subject_code: targetSubjectCode } });
-        if (semester && subject && (semester.semester_number === 1 || semester.semester_number === 2)) {
+        if (semester && subject && subject.semester !== null && (semester.semester_number === 1 || semester.semester_number === 2)) {
           if (subject.semester !== semester.semester_number) {
             throw new BadRequestException(`Môn học này không được tổ chức trong học kì ${semester.semester_number}`);
           }
@@ -652,7 +654,8 @@ export class ExamSchedulesService {
       }
 
       // Check ràng buộc kì học
-      if (semester.semester_number === 1 || semester.semester_number === 2) {
+      // Nếu môn học có semester = null thì được phép ở bất kỳ học kì nào
+      if (subject.semester !== null && (semester.semester_number === 1 || semester.semester_number === 2)) {
         if (subject.semester !== semester.semester_number) {
           errorRows.push({ row: row.rowNum, error: `Môn '${row.subject_code}' không được tổ chức trong học kì ${semester.semester_number}` });
           return false;

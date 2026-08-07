@@ -55,7 +55,7 @@ export class SubjectsService {
           { name: { contains: search, mode: 'insensitive' } }
         ]
       } : {}),
-      ...(semester !== undefined ? { semester } : {}),
+      ...(semester !== undefined ? { OR: [{ semester }, { semester: null }] } : {}),
     };
 
     const [data, total] = await Promise.all([

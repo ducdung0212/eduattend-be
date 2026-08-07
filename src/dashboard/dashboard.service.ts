@@ -31,12 +31,7 @@ export class DashboardService {
       }
     });
 
-    const activeSemesters = await this.prisma.semester.count({
-      where: {
-        start_date: { lte: todayEnd },
-        end_date: { gte: todayStart }
-      }
-    });
+    const totalLecturers= await this.prisma.lecturer.count();
 
     // Attendance stats
     const attendanceStats = await this.prisma.attendanceRecord.groupBy({
@@ -59,7 +54,7 @@ export class DashboardService {
         studentsWithPhotos,
         photoCoveragePercent: totalStudents > 0 ? Math.round((studentsWithPhotos / totalStudents) * 100) : 0,
         examsToday,
-        activeSemesters,
+        totalLecturers,
       },
       attendanceStats: attendanceStats.reduce((acc, curr) => {
         acc[curr.status || 'unknown'] = curr._count._all;
