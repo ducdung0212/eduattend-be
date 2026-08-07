@@ -4,9 +4,10 @@ import { LoginDto, LoginFaceDto, RefreshDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { ChangePassword } from './dto/changePassword.dto';
+import { normalizeIp } from '../utils/normalize-ip';
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @HttpCode(HttpStatus.OK)
   @Post('login')
@@ -22,20 +23,20 @@ export class AuthController {
   @Post('change-password')
   @UseGuards(JwtAuthGuard)
   async changePassword(@Body() changePasswordDto: ChangePassword, @Req() req: any) {
-    return this.authService.changePassword(req.user.email, changePasswordDto.curPass, changePasswordDto.newPass); 
+    return this.authService.changePassword(req.user.email, changePasswordDto.curPass, changePasswordDto.newPass);
   }
 
   @HttpCode(HttpStatus.OK)
   @Post('login-face')
   async loginFace(@Body() loginFaceDto: LoginFaceDto, @Req() req: any) {
-    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    const ip = normalizeIp(req.ip || req.connection?.remoteAddress);
     console.log(`[loginFace] Authenticating for IP: ${ip}`);
     return this.authService.loginFace(loginFaceDto.imageBase64, ip);
   }
 
   @Get('check-face-lock')
   checkFaceLock(@Req() req: any) {
-    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    const ip = normalizeIp(req.ip || req.connection?.remoteAddress);
     console.log(`[checkFaceLock] Checking lock for IP: ${ip}`);
     return this.authService.checkFaceLock(ip);
   }

@@ -7,6 +7,11 @@ import { ValidationPipe, VersioningType } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
+  // Bắt buộc khi chạy sau reverse proxy (Render, Heroku, Vercel, Nginx...)
+  // Giúp req.ip trả về đúng IP client thật từ X-Forwarded-For
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', 1);
+  
   // Cho phép Frontend truy cập API
   app.enableCors({
     origin: [
