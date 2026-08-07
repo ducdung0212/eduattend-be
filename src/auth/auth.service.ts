@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { LambdaService } from '../aws/lambda.service';
 import * as bcrypt from 'bcrypt';
+import { LRUCache } from 'lru-cache';
 
 @Injectable()
 export class AuthService {
@@ -11,6 +12,38 @@ export class AuthService {
     private jwtService: JwtService,
     private lambdaService: LambdaService,
   ) {}
+
+  // Map to track failed face login attempts by IP: IP -> { count, lockedUntil }
+  private faceLoginAttempts = new LRUCache<string, { count: number; lockedUntil: number }>({
+    max: 5000,
+    ttl: 1000 * 60 * 60 * 1, // 1 hours
+  });
+
+  private recordFailedAttempt(ip: string, now: number) {
+    if (ip === 'unknown') return;
+    const attempt = this.faceLoginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+    attempt.count += 1;
+    if (attempt.count >= 3) {
+      attempt.lockedUntil = now + 60 * 60 * 1000; 
+    }
+    this.faceLoginAttempts.set(ip, attempt);
+  }
+
+  private resetFailedAttempt(ip: string) {
+    this.faceLoginAttempts.delete(ip);
+  }
+
+  checkFaceLock(ip: string) {
+    const now = Date.now();
+    const attempt = this.faceLoginAttempts.get(ip);
+    if (attempt && attempt.lockedUntil > now) {
+      return { isLocked: true, lockedUntil: attempt.lockedUntil };
+    }
+    if (attempt && attempt.lockedUntil <= now) {
+      this.resetFailedAttempt(ip);
+    }
+    return { isLocked: false };
+  }
 
   private async generateTokens(payload: any) {
     const [access_token, refresh_token] = await Promise.all([
@@ -68,10 +101,40 @@ export class AuthService {
     };
   }
 
-  async loginFace(imageBase64: string) {
-    const verifyResult = await this.lambdaService.verifyLecturerFace(imageBase64);
+  async loginFace(imageBase64: string, ip: string = 'unknown') {
+    const now = Date.now();
+    const attempt = this.faceLoginAttempts.get(ip);
+    
+    if (attempt && attempt.lockedUntil > now) {
+      const remainingMinutes = Math.ceil((attempt.lockedUntil - now) / 60000);
+      throw new HttpException({
+        message: `Bạn đã nhập sai quá nhiều lần. Chức năng đăng nhập bằng khuôn mặt bị khóa. Vui lòng thử lại sau ${remainingMinutes} phút hoặc dùng mật khẩu.`,
+        lockedUntil: attempt.lockedUntil
+      }, HttpStatus.TOO_MANY_REQUESTS);
+    }
+
+    if (attempt && attempt.lockedUntil <= now) {
+      // Lock expired, reset
+      this.resetFailedAttempt(ip);
+    }
+
+    let verifyResult;
+    try {
+      verifyResult = await this.lambdaService.verifyLecturerFace(imageBase64);
+    } catch (error) {
+      this.recordFailedAttempt(ip, now);
+      throw error;
+    }
 
     if (!verifyResult.success || !verifyResult.data) {
+      this.recordFailedAttempt(ip, now);
+      const attemptAfter = this.faceLoginAttempts.get(ip);
+      if (attemptAfter && attemptAfter.count >= 3) {
+        throw new HttpException({
+          message: 'Bạn đã nhập sai 3 lần. Chức năng đăng nhập bằng khuôn mặt đã bị khóa.',
+          lockedUntil: attemptAfter.lockedUntil
+        }, HttpStatus.TOO_MANY_REQUESTS);
+      }
       throw new UnauthorizedException(verifyResult.message || 'Xác thực khuôn mặt thất bại');
     }
 
@@ -87,16 +150,43 @@ export class AuthService {
         include: { user: true },
       });
       if (!lecturer || !lecturer.user) {
+        this.recordFailedAttempt(ip, now);
+        const attemptAfter = this.faceLoginAttempts.get(ip);
+        if (attemptAfter && attemptAfter.count >= 3) {
+          throw new HttpException({
+            message: 'Tài khoản giảng viên không tồn tại trong hệ thống. Đã khóa tính năng.',
+            lockedUntil: attemptAfter.lockedUntil
+          }, HttpStatus.TOO_MANY_REQUESTS);
+        }
         throw new UnauthorizedException('Tài khoản giảng viên không tồn tại trong hệ thống');
       }
       user = lecturer.user;
       final_lecturer_code = lecturer.lecturer_code;
     } else if (student.student_code) {
       // Chặn sinh viên đăng nhập bằng hình ảnh
+      this.recordFailedAttempt(ip, now);
+      const attemptAfter = this.faceLoginAttempts.get(ip);
+      if (attemptAfter && attemptAfter.count >= 3) {
+        throw new HttpException({
+          message: 'Chức năng này chỉ dành cho giảng viên. Đã khóa tính năng.',
+          lockedUntil: attemptAfter.lockedUntil
+        }, HttpStatus.TOO_MANY_REQUESTS);
+      }
       throw new UnauthorizedException('Chức năng đăng nhập bằng khuôn mặt chỉ dành cho giảng viên.');
     } else {
+      this.recordFailedAttempt(ip, now);
+      const attemptAfter = this.faceLoginAttempts.get(ip);
+      if (attemptAfter && attemptAfter.count >= 3) {
+        throw new HttpException({
+          message: 'Không thể xác định danh tính. Đã khóa tính năng.',
+          lockedUntil: attemptAfter.lockedUntil
+        }, HttpStatus.TOO_MANY_REQUESTS);
+      }
       throw new UnauthorizedException('Không thể xác định danh tính từ kết quả khuôn mặt');
     }
+
+    // Success! Reset attempts.
+    this.resetFailedAttempt(ip);
 
     const payload = {
       sub: user.id,

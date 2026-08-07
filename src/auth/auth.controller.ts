@@ -27,8 +27,17 @@ export class AuthController {
 
   @HttpCode(HttpStatus.OK)
   @Post('login-face')
-  async loginFace(@Body() loginFaceDto: LoginFaceDto) {
-    return this.authService.loginFace(loginFaceDto.imageBase64);
+  async loginFace(@Body() loginFaceDto: LoginFaceDto, @Req() req: any) {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    console.log(`[loginFace] Authenticating for IP: ${ip}`);
+    return this.authService.loginFace(loginFaceDto.imageBase64, ip);
+  }
+
+  @Get('check-face-lock')
+  checkFaceLock(@Req() req: any) {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    console.log(`[checkFaceLock] Checking lock for IP: ${ip}`);
+    return this.authService.checkFaceLock(ip);
   }
 
   @HttpCode(HttpStatus.OK)

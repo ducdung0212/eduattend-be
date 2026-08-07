@@ -38,6 +38,7 @@
     "class-validator": "^0.15.1",
     "dayjs": "^1.11.21",
     "exceljs": "^4.4.0",
+    "lru-cache": "^11.5.2",
     "mariadb": "^3.5.2",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
