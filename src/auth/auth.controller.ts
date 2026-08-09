@@ -34,6 +34,20 @@ export class AuthController {
     return this.authService.loginFace(loginFaceDto.imageBase64, ip);
   }
 
+  @HttpCode(HttpStatus.CREATED)
+  @Post('liveness-session')
+  async createLivenessSession() {
+    return this.authService.createLivenessSession();
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('liveness-login')
+  async loginLiveness(@Body('sessionId') sessionId: string, @Req() req: any) {
+    const ip = normalizeIp(req.ip || req.connection?.remoteAddress);
+    console.log(`[livenessLogin] Authenticating for IP: ${ip} with session: ${sessionId}`);
+    return this.authService.loginLiveness(sessionId, ip);
+  }
+
   @Get('check-face-lock')
   checkFaceLock(@Req() req: any) {
     const ip = normalizeIp(req.ip || req.connection?.remoteAddress);

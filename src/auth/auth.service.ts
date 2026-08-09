@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException, UnauthorizedExcepti
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { LambdaService } from '../aws/lambda.service';
+import { RekognitionService } from '../aws/rekognition.service';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { LRUCache } from 'lru-cache';
 
@@ -11,6 +13,8 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private lambdaService: LambdaService,
+    private rekognitionService: RekognitionService,
+    private configService: ConfigService,
   ) {}
 
   // Map to track failed face login attempts by IP: IP -> { count, lockedUntil }
@@ -208,6 +212,112 @@ export class AuthService {
         lecturer_code: final_lecturer_code
       }
     };
+  }
+
+  async createLivenessSession() {
+    const sessionId = await this.rekognitionService.createLivenessSession();
+    return { sessionId };
+  }
+
+  async loginLiveness(sessionId: string, ip: string = 'unknown') {
+    const now = Date.now();
+    const attempt = this.faceLoginAttempts.get(ip);
+    
+    if (attempt && attempt.lockedUntil > now) {
+      const remainingMinutes = Math.ceil((attempt.lockedUntil - now) / 60000);
+      throw new HttpException({
+        message: `Bạn đã bị khóa do thử quá nhiều lần. Vui lòng thử lại sau ${remainingMinutes} phút.`,
+        lockedUntil: attempt.lockedUntil
+      }, HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (attempt && attempt.lockedUntil <= now) {
+      this.resetFailedAttempt(ip);
+    }
+
+    try {
+      // 1. Get Liveness result
+      const livenessResult = await this.rekognitionService.getLivenessSessionResults(sessionId);
+      console.log(`[Liveness Result] SessionId: ${sessionId}, Status: ${livenessResult.Status}, Confidence: ${livenessResult.Confidence}`);
+
+      if (livenessResult.Status !== 'SUCCEEDED') {
+        throw new UnauthorizedException(`Phiên quét khuôn mặt không hợp lệ hoặc đã hết hạn (Trạng thái: ${livenessResult.Status})`);
+      }
+
+      // Verify confidence
+      const confidenceThreshold = Number(this.configService.get<number>('AWS_LIVENESS_CONFIDENCE_THRESHOLD', 70));
+      const confidence = livenessResult.Confidence || 0;
+      if (confidence < confidenceThreshold) {
+        throw new UnauthorizedException(`Xác thực khuôn mặt thất bại (Liveness: ${confidence.toFixed(2)}%)`);
+      }
+
+      // 2. Extract best image for face matching
+      const auditImageBytes = livenessResult.ReferenceImage?.Bytes || livenessResult.AuditImages?.[0]?.Bytes;
+      if (!auditImageBytes) {
+        throw new UnauthorizedException('Không có hình ảnh để đối chiếu');
+      }
+
+      // 3. Search face in Rekognition collection
+      const faceMatches = await this.rekognitionService.searchFacesByImage(auditImageBytes);
+      
+      if (!faceMatches || faceMatches.length === 0) {
+        throw new UnauthorizedException('Khuôn mặt không khớp với bất kỳ giảng viên nào trong hệ thống');
+      }
+
+      // Get the best match
+      const bestMatch = faceMatches[0];
+      const externalImageId = bestMatch.Face?.ExternalImageId; // Assuming ExternalImageId is lecturer_code
+
+      if (!externalImageId) {
+        throw new UnauthorizedException('Khuôn mặt hợp lệ nhưng không tìm thấy mã định danh (ExternalImageId)');
+      }
+
+      // 4. Find Lecturer in DB
+      const lecturer = await this.prisma.lecturer.findFirst({
+        where: { lecturer_code: externalImageId },
+        include: { user: true },
+      });
+
+      if (!lecturer || !lecturer.user) {
+        throw new UnauthorizedException('Tài khoản giảng viên không tồn tại trong hệ thống');
+      }
+
+      // Reset attempts on success
+      this.resetFailedAttempt(ip);
+
+      const user = lecturer.user;
+      const payload = {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        lecturer_code: lecturer.lecturer_code,
+      };
+
+      const tokens = await this.generateTokens(payload);
+      return {
+        ...tokens,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          lecturer_code: lecturer.lecturer_code
+        }
+      };
+    } catch (error: any) {
+      this.recordFailedAttempt(ip, now);
+      
+      // Nếu là UnauthorizedException (lỗi logic đã định nghĩa)
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      // Bắt lỗi AWS hoặc lỗi khác
+      const errorMessage = error?.message || 'Lỗi hệ thống khi xác thực khuôn mặt';
+      throw new HttpException(
+        errorMessage,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
 
   async refreshToken(refreshToken: string) {
