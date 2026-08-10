@@ -142,7 +142,23 @@ export class AuthService {
       throw new UnauthorizedException(verifyResult.message || 'Xác thực khuôn mặt thất bại');
     }
 
-    const { student } = verifyResult.data;
+    const { student, confidence } = verifyResult.data;
+
+    // Chặn nếu độ tương đồng (Similarity) thấp hơn ngưỡng an toàn (phòng hờ trả về kiểu lạ như object/NaN)
+    const conf = Number(confidence);
+    const faceMatchThreshold = Number(this.configService.get<number>('AWS_FACE_MATCH_THRESHOLD', 95));
+    if (isNaN(conf) || conf < faceMatchThreshold) {
+      this.recordFailedAttempt(ip, now);
+      const attemptAfter = this.faceLoginAttempts.get(ip);
+      if (attemptAfter && attemptAfter.count >= 3) {
+        throw new HttpException({
+          message: 'Bạn đã nhập sai 3 lần. Chức năng đăng nhập bằng khuôn mặt đã bị khóa.',
+          lockedUntil: attemptAfter.lockedUntil
+        }, HttpStatus.TOO_MANY_REQUESTS);
+      }
+      throw new UnauthorizedException(`Độ tin cậy khuôn mặt quá thấp hoặc không hợp lệ. Không khớp với hệ thống. (Confidence: ${JSON.stringify(confidence)})`);
+    }
+
     let user;
     let final_student_code;
     let final_lecturer_code;
@@ -245,9 +261,11 @@ export class AuthService {
 
       // Verify confidence
       const confidenceThreshold = Number(this.configService.get<number>('AWS_LIVENESS_CONFIDENCE_THRESHOLD', 70));
-      const confidence = livenessResult.Confidence || 0;
-      if (confidence < confidenceThreshold) {
-        throw new UnauthorizedException(`Xác thực khuôn mặt thất bại (Liveness: ${confidence.toFixed(2)}%)`);
+      const confidence = livenessResult.Confidence ?? 0;
+      if (confidence === 0) {
+        throw new UnauthorizedException('Phát hiện giả mạo (dùng ảnh/màn hình/camera ảo) hoặc không tìm thấy khuôn mặt. Vui lòng dùng camera thực của thiết bị.');
+      } else if (confidence < confidenceThreshold) {
+        throw new UnauthorizedException(`Độ tin cậy khuôn mặt thực quá thấp (Liveness: ${confidence.toFixed(2)}%). Vui lòng thử lại ở nơi đủ sáng.`);
       }
 
       // 2. Extract best image for face matching
@@ -256,19 +274,29 @@ export class AuthService {
         throw new UnauthorizedException('Không có hình ảnh để đối chiếu');
       }
 
-      // 3. Search face in Rekognition collection
-      const faceMatches = await this.rekognitionService.searchFacesByImage(auditImageBytes);
+      // 3. Chuyển ảnh sang Base64 và gọi Lambda để xác thực khuôn mặt
+      const imageBase64 = Buffer.from(auditImageBytes).toString('base64');
+      const verifyResult = await this.lambdaService.verifyLecturerFace(imageBase64);
       
-      if (!faceMatches || faceMatches.length === 0) {
-        throw new UnauthorizedException('Khuôn mặt không khớp với bất kỳ giảng viên nào trong hệ thống');
+      if (!verifyResult.success || !verifyResult.data) {
+        throw new UnauthorizedException(verifyResult.message || 'Xác thực khuôn mặt thất bại');
       }
 
-      // Get the best match
-      const bestMatch = faceMatches[0];
-      const externalImageId = bestMatch.Face?.ExternalImageId; // Assuming ExternalImageId is lecturer_code
+      // Get the best match (lecturer_code) from Lambda result
+      const { student, confidence: matchConfidence } = verifyResult.data;
+      console.log(`[DEBUG] Lambda verifyResult.data:`, JSON.stringify(verifyResult.data));
+
+      // Chặn nếu độ tương đồng (Similarity) thấp hơn ngưỡng an toàn (phòng hờ trả về kiểu lạ như object/NaN)
+      const conf = Number(matchConfidence);
+      const faceMatchThreshold = Number(this.configService.get<number>('AWS_FACE_MATCH_THRESHOLD', 95));
+      if (isNaN(conf) || conf < faceMatchThreshold) {
+        throw new UnauthorizedException(`Độ tin cậy khuôn mặt quá thấp hoặc không hợp lệ. Không khớp với hệ thống. (Confidence: ${JSON.stringify(matchConfidence)})`);
+      }
+
+      const externalImageId = student.lecturer_code; // Lambda trả về lecturer_code qua key này
 
       if (!externalImageId) {
-        throw new UnauthorizedException('Khuôn mặt hợp lệ nhưng không tìm thấy mã định danh (ExternalImageId)');
+        throw new UnauthorizedException('Khuôn mặt hợp lệ nhưng không tìm thấy mã định danh giảng viên');
       }
 
       // 4. Find Lecturer in DB
