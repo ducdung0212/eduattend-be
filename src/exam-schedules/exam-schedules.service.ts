@@ -27,7 +27,8 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
   room: {
     select: {
       room_code: true,
-      name: true
+      name: true,
+      capacity: true
     }
   },
   semester: {
@@ -44,6 +45,30 @@ const EXAM_SCHEDULE_SELECT: Prisma.ExamScheduleSelect = {
 @Injectable()
 export class ExamSchedulesService {
   constructor(private prisma: PrismaService) { }
+
+  private checkTimeConstraints(start_time: Date | string, duration: number) {
+    const start = dayjs(start_time).tz('Asia/Ho_Chi_Minh');
+    const startMinutes = start.hour() * 60 + start.minute();
+    const endMinutes = startMinutes + duration;
+
+    const minAllowed = 7 * 60; // 7:00 AM
+    const maxAllowed = 18 * 60; // 18:00 PM
+
+    if (duration < 45) {
+      throw new BadRequestException("Thời lượng thi không được nhỏ hơn 45 phút.");
+    }
+    if (duration > 180) {
+      throw new BadRequestException("Thời lượng thi không được vượt quá 180 phút.");
+    }
+    if (startMinutes <= minAllowed) {
+      throw new BadRequestException("Giờ bắt đầu không hợp lệ! Ca thi phải bắt đầu sau 07:00 sáng.");
+    }
+    if (endMinutes >= maxAllowed) {
+      const endH = Math.floor(endMinutes / 60).toString().padStart(2, '0');
+      const endM = (endMinutes % 60).toString().padStart(2, '0');
+      throw new BadRequestException(`Thời lượng không hợp lệ! Ca thi kéo dài đến ${endH}:${endM}, vượt quá giới hạn (phải kết thúc trước 18:00).`);
+    }
+  }
 
   private async checkRoomAvailability(room_code: string, start_time: Date | string, duration: number, excludeScheduleId?: string) {
     const newStart = dayjs(start_time);
@@ -137,6 +162,9 @@ export class ExamSchedulesService {
         throw new BadRequestException(`Môn học này không được tổ chức trong học kì ${semester.semester_number}`);
       }
     }
+
+    // Kiểm tra giờ thi hợp lệ (7h - 18h)
+    this.checkTimeConstraints(createExamScheduleDto.start_time, createExamScheduleDto.duration);
 
     // Kiểm tra trùng môn + nhóm trong học kì
     await this.checkSubjectGroupUnique(
@@ -442,6 +470,7 @@ export class ExamSchedulesService {
       updateExamScheduleDto.start_time !== undefined ||
       updateExamScheduleDto.duration !== undefined
     ) {
+      this.checkTimeConstraints(targetStartTime, targetDuration);
       // Nhớ truyền 'id' vào tham số thứ 4 để loại trừ chính ca thi này lúc kiểm tra DB
       await this.checkRoomAvailability(targetRoomCode, targetStartTime, targetDuration, id);
     }
@@ -556,47 +585,49 @@ export class ExamSchedulesService {
         continue;
       }
 
-      let combinedDateTime: Date;
+      let parsedExamDate: dayjs.Dayjs | null = null;
 
       if (exam_date instanceof Date) {
-        let hours = 0, minutes = 0;
-
-        if (start_time instanceof Date) {
-          // ExcelJS trả về Date epoch cho time cell — lấy UTC hours/minutes
-          hours = start_time.getUTCHours();
-          minutes = start_time.getUTCMinutes();
-        } else if (typeof start_time === 'string') {
-          // Nếu cell là text "09:00" hoặc "9:00"
-          const match = String(start_time).match(/^(\d{1,2}):(\d{2})/);
-          if (match) {
-            hours = Number(match[1]);
-            minutes = Number(match[2]);
-          } else {
-            errorRows.push({ row: i, error: 'Giờ thi không đúng định dạng (HH:mm)' });
-            continue;
-          }
-        } else {
-          errorRows.push({ row: i, error: 'Giờ thi không đúng định dạng' });
-          continue;
+        parsedExamDate = dayjs.utc(exam_date);
+      } else if (typeof exam_date === 'string') {
+        const match = exam_date.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+        if (match) {
+          const [, d, m, y] = match;
+          parsedExamDate = dayjs.utc(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}T00:00:00Z`);
         }
+      }
 
-        // 1. Lấy chuỗi ngày YYYY-MM-DD chính xác từ object exam_date (bỏ qua timezone của server)
-        const dateStr = dayjs.utc(exam_date).format('YYYY-MM-DD');
-
-        // 2. Chèn 0 vào trước giờ/phút nếu cần thiết để đảm bảo chuẩn ISO 8601
-        const hh = String(hours).padStart(2, '0');
-        const mm = String(minutes).padStart(2, '0');
-
-        // 3. Ghép thành chuỗi chuẩn ISO (vd: "2026-06-15T09:30:00")
-        const dateTimeStr = `${dateStr}T${hh}:${mm}:00`;
-
-        // 4. Áp dụng timezone VN và quy đổi về object Date thuần của JS để lưu DB
-        combinedDateTime = dayjs.tz(dateTimeStr, "Asia/Ho_Chi_Minh").toDate();
-
-      } else {
-        errorRows.push({ row: i, error: 'Ngày thi không đúng định dạng' });
+      if (!parsedExamDate || !parsedExamDate.isValid()) {
+        errorRows.push({ row: i, error: 'Ngày thi không đúng định dạng (cần định dạng Date trong Excel hoặc DD/MM/YYYY)' });
         continue;
       }
+
+      let combinedDateTime: Date;
+
+      let hours = 0, minutes = 0;
+
+      if (start_time instanceof Date) {
+        hours = start_time.getUTCHours();
+        minutes = start_time.getUTCMinutes();
+      } else if (typeof start_time === 'string') {
+        const match = String(start_time).match(/^(\d{1,2}):(\d{2})/);
+        if (match) {
+          hours = Number(match[1]);
+          minutes = Number(match[2]);
+        } else {
+          errorRows.push({ row: i, error: 'Giờ thi không đúng định dạng (HH:mm)' });
+          continue;
+        }
+      } else {
+        errorRows.push({ row: i, error: 'Giờ thi không đúng định dạng' });
+        continue;
+      }
+
+      const dateStr = parsedExamDate.format('YYYY-MM-DD');
+      const hh = String(hours).padStart(2, '0');
+      const mm = String(minutes).padStart(2, '0');
+      const dateTimeStr = `${dateStr}T${hh}:${mm}:00`;
+      combinedDateTime = dayjs.tz(dateTimeStr, "Asia/Ho_Chi_Minh").toDate();
 
       // Validate date bounds
       if (combinedDateTime < periodStart || combinedDateTime > periodEnd) {
@@ -613,6 +644,13 @@ export class ExamSchedulesService {
         continue;
       }
 
+      try {
+        this.checkTimeConstraints(combinedDateTime, parsedDuration);
+      } catch (err: any) {
+        errorRows.push({ row: i, error: err.message });
+        continue;
+      }
+
       rawRows.push({ rowNum: i, subject_code, room_code, start_time: combinedDateTime, duration: parsedDuration, group: parsedGroup, note });
     }
 
@@ -622,7 +660,8 @@ export class ExamSchedulesService {
         data: {
           successCount: 0,
           errorCount: errorRows.length,
-          errorMessages: errorRows.map(e => `Dòng ${e.row}: ${e.error}`)
+          errorMessages: errorRows.map(e => `Dòng ${e.row}: ${e.error}`),
+          rawErrors: errorRows
         },
       };
     }

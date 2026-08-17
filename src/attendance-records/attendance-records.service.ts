@@ -270,10 +270,23 @@ export class AttendanceRecordsService {
 
   async create(createAttendanceRecordDto: CreateAttendanceRecordDto) {
     const schedule = await this.prisma.examSchedule.findUnique({
-      where: { id: createAttendanceRecordDto.exam_schedule_id }
+      where: { id: createAttendanceRecordDto.exam_schedule_id },
+      include: { room: true }
     });
     if (!schedule) {
       throw new NotFoundException("Không tìm thấy ca thi");
+    }
+
+    if (!createAttendanceRecordDto.force_capacity_override && schedule.room) {
+      const currentCount = await this.prisma.attendanceRecord.count({
+        where: { exam_schedule_id: createAttendanceRecordDto.exam_schedule_id }
+      });
+      if (currentCount >= schedule.room.capacity) {
+        throw new ConflictException({
+          require_confirmation: true,
+          message: `Phòng thi đã đầy (sức chứa: ${schedule.room.capacity}, hiện tại: ${currentCount}). Bạn có chắc chắn muốn thêm sinh viên này?`
+        });
+      }
     }
 
     const existingSubjectSemester = await this.prisma.attendanceRecord.findFirst({
@@ -413,8 +426,21 @@ export class AttendanceRecordsService {
     // 2. Kiểm tra ca thi tồn tại và lấy thời gian thi
     const schedule = await this.prisma.examSchedule.findUnique({
       where: { id: exam_schedule_id },
+      include: { room: true }
     });
     if (!schedule) throw new NotFoundException('Không tìm thấy ca thi');
+
+    if (!dto.force_capacity_override && schedule.room) {
+      const currentCount = await this.prisma.attendanceRecord.count({
+        where: { exam_schedule_id }
+      });
+      if (currentCount + uniqueCodes.length > schedule.room.capacity) {
+        throw new ConflictException({
+          require_confirmation: true,
+          message: `Phòng thi sẽ bị quá tải! (Sức chứa: ${schedule.room.capacity}, Hiện tại: ${currentCount}, Thêm mới: ${uniqueCodes.length}). Bạn có chắc chắn muốn thêm vượt mức?`
+        });
+      }
+    }
 
     // 3. Kiểm tra sinh viên tồn tại (1 query)
     const students = await this.prisma.student.findMany({
@@ -568,7 +594,7 @@ export class AttendanceRecordsService {
     };
   }
 
-  async importFromExcel(fileBuffer: Buffer, exam_schedule_id: string) {
+  async importFromExcel(fileBuffer: Buffer, exam_schedule_id: string, force_capacity_override: boolean = false) {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileBuffer as any);
     
@@ -622,7 +648,8 @@ export class AttendanceRecordsService {
     // Tái sử dụng logic bulkCreate
     const bulkResult = await this.bulkCreate({
       exam_schedule_id,
-      student_codes
+      student_codes,
+      force_capacity_override
     });
 
     const failed = bulkResult.data.failed;

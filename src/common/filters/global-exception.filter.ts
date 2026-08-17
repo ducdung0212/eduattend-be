@@ -52,11 +52,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // Đảm bảo message trả về luôn là một chuỗi (String) dễ đọc cho Frontend
     const finalMessage = Array.isArray(message) ? message[0] : message;
 
+    let extraData: any = null;
+    if (exception instanceof HttpException) {
+      const exceptionResponse = exception.getResponse();
+      if (typeof exceptionResponse === 'object' && exceptionResponse !== null && 'require_confirmation' in exceptionResponse) {
+        extraData = { require_confirmation: (exceptionResponse as any).require_confirmation };
+      }
+    }
+
     // Định dạng JSON chuẩn xuất ra Frontend
     response.status(status).json({
       status: status,
       message: finalMessage,
       data: null,
+      ...extraData
     });
   }
 }

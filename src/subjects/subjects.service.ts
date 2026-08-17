@@ -186,7 +186,8 @@ export class SubjectsService {
         data: {
           successCount: 0,
           errorCount: errorRows.length,
-          errorMessage: errorRows.map(e => `Dòng ${e.row}: ${e.error}`)
+          errorMessages: errorRows.map(e => `Dòng ${e.row}: ${e.error}`),
+          rawErrors: errorRows
         }
       }
     }

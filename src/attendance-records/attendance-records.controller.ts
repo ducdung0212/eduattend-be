@@ -62,10 +62,14 @@ export class AttendanceRecordsController {
           }),
         ],
       }),
-    )
-    file: Express.Multer.File,
+    ) file: Express.Multer.File,
+    @Body('force_capacity_override') force?: string,
   ) {
-    return this.attendanceRecordsService.importFromExcel(file.buffer, exam_schedule_id);
+    return this.attendanceRecordsService.importFromExcel(
+      file.buffer, 
+      exam_schedule_id,
+      force === 'true'
+    );
   }
 
   @Roles('admin','lecturer')

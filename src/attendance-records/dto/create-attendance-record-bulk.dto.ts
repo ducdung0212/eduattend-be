@@ -1,4 +1,4 @@
-import { IsArray, IsNotEmpty, IsString, IsUUID, ArrayMinSize } from 'class-validator';
+import { IsArray, IsNotEmpty, IsString, IsUUID, ArrayMinSize, IsOptional, IsBoolean } from 'class-validator';
 
 export class CreateAttendanceRecordBulkDto {
   @IsUUID()
@@ -9,4 +9,8 @@ export class CreateAttendanceRecordBulkDto {
   @ArrayMinSize(1)
   @IsString({ each: true })
   student_codes!: string[];
+
+  @IsOptional()
+  @IsBoolean()
+  force_capacity_override?: boolean;
 }

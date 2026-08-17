@@ -333,7 +333,12 @@ export class StudentsService {
     if (rawRows.length === 0) {
       return {
         message: 'Không có dữ liệu hợp lệ để import',
-        data: { successCount: 0, errorCount: errorRows.length, rawErrors: errorRows },
+        data: { 
+          successCount: 0, 
+          errorCount: errorRows.length, 
+          errorMessages: errorRows.map(e => `Dòng ${e.row}: ${e.error}`),
+          rawErrors: errorRows 
+        },
       };
     }
 
