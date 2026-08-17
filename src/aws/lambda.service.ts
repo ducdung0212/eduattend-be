@@ -22,7 +22,7 @@ export interface UserInfo {
 export interface VerifyFaceResult {
   success: boolean;
   data?: {
-    student: UserInfo; // toàn bộ record từ DynamoDB
+    user: UserInfo; // toàn bộ record từ DynamoDB
     confidence: number;   // Similarity từ Rekognition (0-100)
     face_id: string;      // FaceId trong Rekognition Collection
     rekognition_result: string;
@@ -141,7 +141,7 @@ export class LambdaService {
       return {
         success: true,
         data: {
-          student: body.data!.student,
+          user: body.data!.student,
           confidence: body.data!.confidence,
           face_id: body.data!.face_id,
           rekognition_result: body.data!.rekognition_result,
@@ -222,7 +222,7 @@ export class LambdaService {
       return {
         success: true,
         data: {
-          student: body.data!.lecturer || body.data!.student, // Hỗ trợ cả key 'lecturer' và 'student'
+          user: body.data!.lecturer || body.data!.student, // Hỗ trợ cả key 'lecturer' và 'student'
           confidence: body.data!.confidence,
           face_id: body.data!.face_id,
           rekognition_result: body.data!.rekognition_result,

@@ -10,10 +10,6 @@ export class LoginDto {
   password!: string;
 }
 
-export class LoginFaceDto {
-  @IsNotEmpty({ message: 'Ảnh khuôn mặt không được để trống' })
-  imageBase64!: string;
-}
 
 export class RefreshDto {
   @IsNotEmpty({ message: 'Refresh token không được để trống' })

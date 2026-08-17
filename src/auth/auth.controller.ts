@@ -1,6 +1,6 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, Get, UseGuards, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { LoginDto, LoginFaceDto, RefreshDto } from './dto/login.dto';
+import { LoginDto, RefreshDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { ChangePassword } from './dto/changePassword.dto';
@@ -24,14 +24,6 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async changePassword(@Body() changePasswordDto: ChangePassword, @Req() req: any) {
     return this.authService.changePassword(req.user.email, changePasswordDto.curPass, changePasswordDto.newPass);
-  }
-
-  @HttpCode(HttpStatus.OK)
-  @Post('login-face')
-  async loginFace(@Body() loginFaceDto: LoginFaceDto, @Req() req: any) {
-    const ip = normalizeIp(req.ip || req.connection?.remoteAddress);
-    console.log(`[loginFace] Authenticating for IP: ${ip}`);
-    return this.authService.loginFace(loginFaceDto.imageBase64, ip);
   }
 
   @HttpCode(HttpStatus.CREATED)

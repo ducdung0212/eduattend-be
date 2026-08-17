@@ -105,130 +105,6 @@ export class AuthService {
     };
   }
 
-  async loginFace(imageBase64: string, ip: string = 'unknown') {
-    const now = Date.now();
-    const attempt = this.faceLoginAttempts.get(ip);
-    
-    if (attempt && attempt.lockedUntil > now) {
-      const remainingMinutes = Math.ceil((attempt.lockedUntil - now) / 60000);
-      throw new HttpException({
-        message: `Bạn đã nhập sai quá nhiều lần. Chức năng đăng nhập bằng khuôn mặt bị khóa. Vui lòng thử lại sau ${remainingMinutes} phút hoặc dùng mật khẩu.`,
-        lockedUntil: attempt.lockedUntil
-      }, HttpStatus.TOO_MANY_REQUESTS);
-    }
-
-    if (attempt && attempt.lockedUntil <= now) {
-      // Lock expired, reset
-      this.resetFailedAttempt(ip);
-    }
-
-    let verifyResult;
-    try {
-      verifyResult = await this.lambdaService.verifyLecturerFace(imageBase64);
-    } catch (error) {
-      this.recordFailedAttempt(ip, now);
-      throw error;
-    }
-
-    if (!verifyResult.success || !verifyResult.data) {
-      this.recordFailedAttempt(ip, now);
-      const attemptAfter = this.faceLoginAttempts.get(ip);
-      if (attemptAfter && attemptAfter.count >= 3) {
-        throw new HttpException({
-          message: 'Bạn đã nhập sai 3 lần. Chức năng đăng nhập bằng khuôn mặt đã bị khóa.',
-          lockedUntil: attemptAfter.lockedUntil
-        }, HttpStatus.TOO_MANY_REQUESTS);
-      }
-      throw new UnauthorizedException(verifyResult.message || 'Xác thực khuôn mặt thất bại');
-    }
-
-    const { student, confidence } = verifyResult.data;
-
-    // Chặn nếu độ tương đồng (Similarity) thấp hơn ngưỡng an toàn (phòng hờ trả về kiểu lạ như object/NaN)
-    const conf = Number(confidence);
-    const faceMatchThreshold = Number(this.configService.get<number>('AWS_FACE_MATCH_THRESHOLD', 95));
-    if (isNaN(conf) || conf < faceMatchThreshold) {
-      this.recordFailedAttempt(ip, now);
-      const attemptAfter = this.faceLoginAttempts.get(ip);
-      if (attemptAfter && attemptAfter.count >= 3) {
-        throw new HttpException({
-          message: 'Bạn đã nhập sai 3 lần. Chức năng đăng nhập bằng khuôn mặt đã bị khóa.',
-          lockedUntil: attemptAfter.lockedUntil
-        }, HttpStatus.TOO_MANY_REQUESTS);
-      }
-      throw new UnauthorizedException(`Độ tin cậy khuôn mặt quá thấp hoặc không hợp lệ. Không khớp với hệ thống. (Confidence: ${JSON.stringify(confidence)})`);
-    }
-
-    let user;
-    let final_student_code;
-    let final_lecturer_code;
-
-    // Phân biệt sinh viên và giảng viên
-    if (student.lecturer_code) {
-      const lecturer = await this.prisma.lecturer.findUnique({
-        where: { lecturer_code: student.lecturer_code },
-        include: { user: true },
-      });
-      if (!lecturer || !lecturer.user) {
-        this.recordFailedAttempt(ip, now);
-        const attemptAfter = this.faceLoginAttempts.get(ip);
-        if (attemptAfter && attemptAfter.count >= 3) {
-          throw new HttpException({
-            message: 'Tài khoản giảng viên không tồn tại trong hệ thống. Đã khóa tính năng.',
-            lockedUntil: attemptAfter.lockedUntil
-          }, HttpStatus.TOO_MANY_REQUESTS);
-        }
-        throw new UnauthorizedException('Tài khoản giảng viên không tồn tại trong hệ thống');
-      }
-      user = lecturer.user;
-      final_lecturer_code = lecturer.lecturer_code;
-    } else if (student.student_code) {
-      // Chặn sinh viên đăng nhập bằng hình ảnh
-      this.recordFailedAttempt(ip, now);
-      const attemptAfter = this.faceLoginAttempts.get(ip);
-      if (attemptAfter && attemptAfter.count >= 3) {
-        throw new HttpException({
-          message: 'Chức năng này chỉ dành cho giảng viên. Đã khóa tính năng.',
-          lockedUntil: attemptAfter.lockedUntil
-        }, HttpStatus.TOO_MANY_REQUESTS);
-      }
-      throw new UnauthorizedException('Chức năng đăng nhập bằng khuôn mặt chỉ dành cho giảng viên.');
-    } else {
-      this.recordFailedAttempt(ip, now);
-      const attemptAfter = this.faceLoginAttempts.get(ip);
-      if (attemptAfter && attemptAfter.count >= 3) {
-        throw new HttpException({
-          message: 'Không thể xác định danh tính. Đã khóa tính năng.',
-          lockedUntil: attemptAfter.lockedUntil
-        }, HttpStatus.TOO_MANY_REQUESTS);
-      }
-      throw new UnauthorizedException('Không thể xác định danh tính từ kết quả khuôn mặt');
-    }
-
-    // Success! Reset attempts.
-    this.resetFailedAttempt(ip);
-
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-      ...(final_student_code && { student_code: final_student_code }),
-      ...(final_lecturer_code && { lecturer_code: final_lecturer_code }),
-    };
-
-    const tokens = await this.generateTokens(payload);
-    return {
-      ...tokens,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        student_code: final_student_code,
-        lecturer_code: final_lecturer_code
-      }
-    };
-  }
 
   async createLivenessSession() {
     const sessionId = await this.rekognitionService.createLivenessSession();
@@ -283,7 +159,7 @@ export class AuthService {
       }
 
       // Get the best match (lecturer_code) from Lambda result
-      const { student, confidence: matchConfidence } = verifyResult.data;
+      const { user, confidence: matchConfidence } = verifyResult.data;
       console.log(`[DEBUG] Lambda verifyResult.data:`, JSON.stringify(verifyResult.data));
 
       // Chặn nếu độ tương đồng (Similarity) thấp hơn ngưỡng an toàn (phòng hờ trả về kiểu lạ như object/NaN)
@@ -293,7 +169,7 @@ export class AuthService {
         throw new UnauthorizedException(`Độ tin cậy khuôn mặt quá thấp hoặc không hợp lệ. Không khớp với hệ thống. (Confidence: ${JSON.stringify(matchConfidence)})`);
       }
 
-      const externalImageId = student.lecturer_code; // Lambda trả về lecturer_code qua key này
+      const externalImageId = user.lecturer_code; // Lambda trả về lecturer_code qua key này
 
       if (!externalImageId) {
         throw new UnauthorizedException('Khuôn mặt hợp lệ nhưng không tìm thấy mã định danh giảng viên');
@@ -312,11 +188,11 @@ export class AuthService {
       // Reset attempts on success
       this.resetFailedAttempt(ip);
 
-      const user = lecturer.user;
+      const userMatch = lecturer.user;
       const payload = {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
+        sub: userMatch.id,
+        email: userMatch.email,
+        role: userMatch.role,
         lecturer_code: lecturer.lecturer_code,
       };
 
@@ -324,10 +200,10 @@ export class AuthService {
       return {
         ...tokens,
         user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+          id: userMatch.id,
+          name: userMatch.name,
+          email: userMatch.email,
+          role: userMatch.role,
           lecturer_code: lecturer.lecturer_code
         }
       };

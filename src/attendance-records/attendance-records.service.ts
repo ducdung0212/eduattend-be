@@ -86,9 +86,9 @@ export class AttendanceRecordsService {
         result.message ?? 'Không nhận diện được khuôn mặt',
       );
     }
-    const { student, confidence, face_id, rekognition_result } = result.data;
+    const { user, confidence, face_id, rekognition_result } = result.data;
 
-    const student_code = student.student_code;
+    const student_code = user.student_code;
 
     if (!student_code) {
       throw new BadRequestException("Chỉ sinh viên mới có thể điểm danh ca thi.");

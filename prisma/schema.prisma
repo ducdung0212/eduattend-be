@@ -197,6 +197,4 @@ enum RekognitionResult {
 enum AttendanceStatus {
   present
   absent
-  late
-  excused
 }
