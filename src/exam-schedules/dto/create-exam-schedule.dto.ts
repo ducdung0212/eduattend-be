@@ -1,19 +1,19 @@
-import { IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID } from "class-validator";
+import { IsDateString, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from "class-validator";
 
 export class CreateExamScheduleDto {
-    @IsNotEmpty({message:"Mã môn học không được để trống"})
+    @IsNotEmpty({ message: "Mã môn học không được để trống" })
     @IsString()
     subject_code!: string;
 
-    @IsNotEmpty({message:"Thời gian thi không được để trống"})
+    @IsNotEmpty({ message: "Thời gian thi không được để trống" })
     @IsDateString()
     start_time!: string; // ISO 8601 string, ví dụ: "2026-05-31T08:30:00Z"
 
-    @IsNotEmpty({message:"Thời lượng thi không được để trống"})
+    @IsNotEmpty({ message: "Thời lượng thi không được để trống" })
     @IsNumber()
     duration!: number;
 
-    @IsNotEmpty({message:"Mã phòng không được để trống"})
+    @IsNotEmpty({ message: "Mã phòng không được để trống" })
     @IsString()
     room_code!: string;
 
@@ -21,11 +21,13 @@ export class CreateExamScheduleDto {
     @IsString()
     note?: string;
 
-    @IsNotEmpty({message:"Nhóm không được để trống"})
+    @IsNotEmpty({ message: "Nhóm không được để trống" })
     @IsNumber()
+    @Min(1, { message: "Số thứ tự nhóm tối thiếu là 1" })
+    @Max(10, { message: "Số thứ tự nhóm tối đa là 10" })
     group!: number;
 
-    @IsNotEmpty({message:"Mã học kì không được để trống"})
+    @IsNotEmpty({ message: "Mã học kì không được để trống" })
     @IsUUID('4', { message: 'Mã học kì không hợp lệ' })
     semester_id!: string;
 }
