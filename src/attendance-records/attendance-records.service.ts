@@ -631,8 +631,15 @@ export class AttendanceRecordsService {
       if (rowNumber <= headerRowIndex) return;
 
       const cell = row.getCell(mssvColIndex);
-      const val = cell.text?.toString().trim();
+      let val = cell.text?.toString().replace(/[\u200B-\u200D\uFEFF]/g, '').trim(); // Loại bỏ zero-width characters
+      
       if (val) {
+        const lowerVal = val.toLowerCase();
+        // Bỏ qua nếu dòng này là sub-header (do merge nhiều dòng)
+        if (lowerVal.includes('mssv') || lowerVal.includes('mã sv') || lowerVal.includes('mã sinh viên') || lowerVal.includes('student code') || lowerVal === 'student_code') {
+          return;
+        }
+
         student_codes.push(val);
         const upperVal = val.toUpperCase();
         if (!codeToRowMap.has(upperVal)) {
