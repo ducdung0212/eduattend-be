@@ -60,10 +60,10 @@ export class ExamSchedulesService {
     if (duration > 180) {
       throw new BadRequestException("Thời lượng thi không được vượt quá 180 phút.");
     }
-    if (startMinutes <= minAllowed) {
+    if (startMinutes < minAllowed) {
       throw new BadRequestException("Giờ bắt đầu không hợp lệ! Ca thi phải bắt đầu sau 07:00 sáng.");
     }
-    if (endMinutes >= maxAllowed) {
+    if (endMinutes > maxAllowed) {
       const endH = Math.floor(endMinutes / 60).toString().padStart(2, '0');
       const endM = (endMinutes % 60).toString().padStart(2, '0');
       throw new BadRequestException(`Thời lượng không hợp lệ! Ca thi kéo dài đến ${endH}:${endM}, vượt quá giới hạn (phải kết thúc trước 18:00).`);
