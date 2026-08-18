@@ -45,6 +45,11 @@ export class SemestersService {
         if (isNaN(startYear) || isNaN(endYear)) {
             throw new BadRequestException('Năm học không đúng định dạng (VD: 2025-2026)');
         }
+
+        const currentYear = new Date().getFullYear();
+        if (startYear < currentYear - 1 || startYear > currentYear) {
+            throw new BadRequestException(`Chỉ có thể tạo mới học kì cho năm học ${currentYear - 1}-${currentYear} hoặc ${currentYear}-${currentYear + 1}`);
+        }
         
         const minDate = dayjs(`${startYear}-01-01`).startOf('year');
         const maxDate = dayjs(`${endYear}-12-31`).endOf('year');
@@ -242,7 +247,7 @@ export class SemestersService {
         });
 
         if (schedulesCount > 0) {
-            throw new ConflictException(`Không thể xóa học kì này vì đang có ${schedulesCount} ca thi. Vui lòng gỡ hoặc xóa các ca thi bên trong trước.`);
+            throw new ConflictException(`Không thể xóa học kì này vì đang có ${schedulesCount} ca thi.`);
         }
 
         await this.prisma.semester.delete({ where: { id } });

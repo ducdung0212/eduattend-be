@@ -3,7 +3,6 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
-import * as ExcelJS from 'exceljs';
 import { Prisma } from '@prisma/client';
 
 const USER_SELECT: Prisma.UserSelect = {
@@ -121,7 +120,6 @@ export class UsersService {
     await this.prisma.user.delete({
       where: { id },
     });
-
 
     return {
       message: 'Xóa người dùng thành công'

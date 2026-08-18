@@ -149,66 +149,14 @@ export class AttendanceRecordsService {
     confidence?: number,
     face_id?: string
   ) {
-    const existingStudent = await this.prisma.student.findUnique({
-      where: { student_code: student_code },
-      select: {
-        student_code: true,
-        last_name: true,
-        first_name: true
-      }
-    });
+    const roomCheck = await this.checkStudentRoom(student_code, exam_schedule_id);
 
-    if (!existingStudent) {
-      throw new BadRequestException(`Sinh viên ${student_code} không có trong hệ thống.`);
+    if (roomCheck.type !== 'success' || !roomCheck.data) {
+      throw new NotFoundException(roomCheck.message);
     }
 
+    const { existingStudent, validStudent } = roomCheck.data;
     const fullName = `${existingStudent.last_name} ${existingStudent.first_name}`;
-
-    const validStudent = await this.prisma.attendanceRecord.findFirst({
-      where: { exam_schedule_id, student_code }
-    });
-
-    if (!validStudent) {
-      // Tìm lịch thi của sinh viên trong ngày hôm nay
-      const startOfDay = now.tz("Asia/Ho_Chi_Minh").startOf('day').toDate();
-      const endOfDay = now.tz("Asia/Ho_Chi_Minh").endOf('day').toDate();
-
-      const todaySchedules = await this.prisma.attendanceRecord.findMany({
-        where: {
-          student_code: student_code,
-          exam_schedule: {
-            start_time: {
-              gte: startOfDay,
-              lte: endOfDay,
-            }
-          }
-        },
-        include: {
-          exam_schedule: {
-            include: {
-              subject: true,
-              room: true
-            }
-          }
-        },
-        orderBy: {
-          exam_schedule: {
-            start_time: 'asc'
-          }
-        }
-      });
-
-      if (todaySchedules.length > 0) {
-        const scheduleDetails = todaySchedules.map(r => {
-          const s = r.exam_schedule;
-          const timeStr = dayjs(s.start_time).tz("Asia/Ho_Chi_Minh").format('HH:mm');
-          return `môn ${s.subject.name} lúc ${timeStr} tại phòng ${s.room?.name || ''}`;
-        }).join(', ');
-        throw new NotFoundException(`Sinh viên ${fullName} (${student_code}) đi nhầm phòng. Lịch thi hôm nay: ${scheduleDetails}.`);
-      }
-
-      throw new NotFoundException(`Sinh viên ${fullName} (${student_code}) không thuộc ca thi này và không có lịch thi nào trong hôm nay.`);
-    }
 
     if (method === 'face' && confidence !== undefined) {
       if (confidence < this.confidenceThreshold) {
@@ -267,6 +215,96 @@ export class AttendanceRecordsService {
       }
     };
   }
+
+  async checkStudentRoom(student_code: string, exam_schedule_id: string) {
+    const existingStudent = await this.prisma.student.findUnique({
+      where: { student_code: student_code },
+      select: {
+        student_code: true,
+        last_name: true,
+        first_name: true
+      }
+    });
+
+    if (!existingStudent) {
+      throw new BadRequestException(`Sinh viên ${student_code} không có trong hệ thống.`);
+    }
+
+    const fullName = `${existingStudent.last_name} ${existingStudent.first_name}`;
+
+    const validStudent = await this.prisma.attendanceRecord.findFirst({
+      where: { exam_schedule_id, student_code }
+    });
+
+    const schedule = await this.prisma.examSchedule.findUnique({
+      where: { id: exam_schedule_id }
+    });
+
+    if (!schedule) {
+      throw new NotFoundException(`Lịch thi không tồn tại`);
+    }
+
+    const now = dayjs(schedule.start_time);
+    const startOfDay = now.tz("Asia/Ho_Chi_Minh").startOf('day').toDate();
+    const endOfDay = now.tz("Asia/Ho_Chi_Minh").endOf('day').toDate();
+
+    const todaySchedules = await this.prisma.attendanceRecord.findMany({
+      where: {
+        student_code: student_code,
+        exam_schedule: {
+          start_time: {
+            gte: startOfDay,
+            lte: endOfDay,
+          }
+        }
+      },
+      include: {
+        exam_schedule: {
+          include: {
+            subject: true,
+            room: true
+          }
+        }
+      },
+      orderBy: {
+        exam_schedule: {
+          start_time: 'asc'
+        }
+      }
+    });
+
+    const scheduleDetails = todaySchedules.map(r => {
+      const s = r.exam_schedule;
+      const timeStr = dayjs(s.start_time).tz("Asia/Ho_Chi_Minh").format('HH:mm');
+      return `môn ${s.subject.name} lúc ${timeStr} tại phòng ${s.room?.name || ''}`;
+    }).join(', ');
+
+    if (validStudent) {
+      return {
+        type: 'success',
+        message: todaySchedules.length > 1 
+          ? `Sinh viên ${student_code} ĐÚNG PHÒNG. Các ca thi hôm nay: ${scheduleDetails}.`
+          : `Sinh viên ${student_code} ĐÚNG PHÒNG.`,
+        data: {
+          existingStudent,
+          validStudent
+        }
+      };
+    }
+
+    if (todaySchedules.length > 0) {
+      return {
+        type: 'info',
+        message: `Sinh viên ${fullName} (${student_code}) ĐI NHẦM PHÒNG. Lịch thi hôm nay: ${scheduleDetails}.`
+      };
+    }
+
+    return {
+      type: 'error',
+      message: `Sinh viên ${fullName} (${student_code}) không thuộc ca thi này và không có lịch thi nào trong hôm nay.`
+    };
+  }
+
 
   async create(createAttendanceRecordDto: CreateAttendanceRecordDto) {
     const schedule = await this.prisma.examSchedule.findUnique({

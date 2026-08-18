@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile, ParseFilePipe, FileTypeValidator, MaxFileSizeValidator } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query, UseInterceptors, UploadedFile, ParseFilePipe, FileTypeValidator, MaxFileSizeValidator, BadRequestException } from '@nestjs/common';
 import { AttendanceRecordsService } from './attendance-records.service';
 import { CreateAttendanceRecordDto } from './dto/create-attendance-record.dto';
 import { UpdateAttendanceRecordDto } from './dto/update-attendance-record.dto';
@@ -23,7 +23,7 @@ export class AttendanceRecordsController {
   }
 
   @Get()
-  @Roles('admin','lecturer')
+  @Roles('admin', 'lecturer')
   @UseGuards(ExamScheduleOwnerGuard)
   findAll(
     @Query('search') search?: string,
@@ -41,10 +41,23 @@ export class AttendanceRecordsController {
     });
   }
 
-  @Post('bulk')
-    bulkCreate(@Body() dto: CreateAttendanceRecordBulkDto) {
-      return this.attendanceRecordsService.bulkCreate(dto);
+  @Get('check-room')
+  @Roles('admin', 'lecturer')
+  @UseGuards(ExamScheduleOwnerGuard)
+  async checkRoom(
+    @Query('student_code') student_code: string,
+    @Query('exam_schedule_id') exam_schedule_id: string,
+  ) {
+    if (!student_code || !exam_schedule_id) {
+      throw new BadRequestException("Thiếu student_code hoặc exam_schedule_id");
     }
+    return this.attendanceRecordsService.checkStudentRoom(student_code, exam_schedule_id);
+  }
+
+  @Post('bulk')
+  bulkCreate(@Body() dto: CreateAttendanceRecordBulkDto) {
+    return this.attendanceRecordsService.bulkCreate(dto);
+  }
 
   @Roles('admin', 'lecturer')
   @UseGuards(ExamScheduleOwnerGuard)
@@ -66,13 +79,13 @@ export class AttendanceRecordsController {
     @Body('force_capacity_override') force?: string,
   ) {
     return this.attendanceRecordsService.importFromExcel(
-      file.buffer, 
+      file.buffer,
       exam_schedule_id,
       force === 'true'
     );
   }
 
-  @Roles('admin','lecturer')
+  @Roles('admin', 'lecturer')
   @UseGuards(ExamScheduleOwnerGuard)
   @Post('check-in')
   @UseInterceptors(FileInterceptor('image'))
@@ -97,7 +110,7 @@ export class AttendanceRecordsController {
     );
   }
 
-  @Roles('admin','lecturer')
+  @Roles('admin', 'lecturer')
   @UseGuards(ExamScheduleOwnerGuard)
   @Post('check-in/qr')
   async checkInQR(@Body() checkInQrDto: CheckInQrDto) {

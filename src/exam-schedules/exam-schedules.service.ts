@@ -66,7 +66,9 @@ export class ExamSchedulesService {
     if (endMinutes > maxAllowed) {
       const endH = Math.floor(endMinutes / 60).toString().padStart(2, '0');
       const endM = (endMinutes % 60).toString().padStart(2, '0');
-      throw new BadRequestException(`Thời lượng không hợp lệ! Ca thi kéo dài đến ${endH}:${endM}, vượt quá giới hạn (phải kết thúc trước 18:00).`);
+      const limitH = Math.floor(maxAllowed / 60).toString().padStart(2, '0');
+      const limitM = (maxAllowed % 60).toString().padStart(2, '0');
+      throw new BadRequestException(`Thời lượng không hợp lệ! Ca thi kéo dài đến ${endH}:${endM}, vượt quá giới hạn (phải kết thúc trước ${limitH}:${limitM}).`);
     }
   }
 
@@ -154,7 +156,6 @@ export class ExamSchedulesService {
     if (!semester) {
       throw new NotFoundException('Không tìm thấy học kì');
     }
-
     // Kiểm tra ràng buộc môn học theo học kì
     // Nếu môn học có semester = null thì được phép tạo ở bất kỳ học kì nào
     if (existingSubject.semester !== null && (semester.semester_number === 1 || semester.semester_number === 2)) {
